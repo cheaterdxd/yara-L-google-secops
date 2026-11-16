@@ -1,0 +1,33 @@
+# T1613 — Container and Resource Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1613 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Kubernetes Audit Logs
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Legitimate DevOps engineers and SREs routinely run kubectl get pods/nodes and docker ps for operational monitoring and troubleshooting, CI/CD pipeline agents (Jenkins, GitLab Runner, GitHub Actions self-hosted) execute container enumeration commands as part of automated build, test, and deploy workflows, Kubernetes operators, admission controllers, and monitoring tools (Prometheus node-exporter, Datadog agent, Falco) query the kubelet API and Kubernetes API server continuously for health data, Container security scanners (Trivy, Anchore, Snyk) enumerate images and running containers during scheduled vulnerability assessments
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1613
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_container_abuse {
+  meta:
+    author = "Argus"
+    description = "Detects suspicious container management and escape attempts"
+    severity = "HIGH"
+    technique = "T1609_T1611"
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $e.target.process.file.full_path = "/usr/bin/docker" or
+      $e.target.process.file.full_path = "/usr/bin/kubectl" or
+      $e.target.process.file.full_path = "/usr/bin/nsenter" or
+      re.regex($e.target.process.file.full_path, `crictl|podman|runc`) nocase
+    )
+    (
+      re.regex($e.target.process.command_line, `--privileged|--pid=host|--cap-add=SYS_ADMIN|nsenter.*--pid.*1`) nocase
+    )
+  condition:
+    $e
+}

@@ -1,0 +1,22 @@
+rule okta_mfa_bypass_success {
+  meta:
+    author = "Kelvin Odarikpe"
+    description = "Okta MFA challenge failures followed by success — fatigue / bypass pattern"
+    severity = "HIGH"
+    mitre = "T1621"
+    portfolio = "true"
+    product = "Google SecOps / Chronicle"
+  events:
+    $fail.metadata.vendor_name = "Okta"
+    $fail.metadata.event_type = "USER_LOGIN"
+    $fail.security_result.action = "BLOCK"
+    $ok.metadata.vendor_name = "Okta"
+    $ok.metadata.event_type = "USER_LOGIN"
+    $ok.security_result.action = "ALLOW"
+    $fail.principal.user.userid = $ok.principal.user.userid
+  match:
+    $fail.principal.user.userid over 20m
+  condition:
+    # at least 4 failures then a success in the same window
+    $fail and $ok
+}

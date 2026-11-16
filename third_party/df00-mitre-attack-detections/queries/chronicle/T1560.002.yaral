@@ -1,0 +1,48 @@
+# T1560.002 — Archive via Library
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule for T1560.002 using UDM event types PROCESS_MODULE_LOAD, PROCESS_LAUNCH, and FILE_CREATION.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM-normalized Windows endpoint telemetry, Chronicle Forwarder with Sysmon or CrowdStrike/Carbon Black feed
+# Required Sources: UDM Events with event_type in (PROCESS_MODULE_LOAD, PROCESS_LAUNCH, FILE_CREATION)
+# False Positives: Python ETL or data pipeline workflows (Apache Airflow tasks, custom ingestion scripts) that import compression modules to handle compressed data files, with imports visible in process command-line arguments captured by Chronicle, PowerShell-based deployment automation using ZipFile or GZipStream to package application components or config bundles before distributing to endpoints via SCCM or Group Policy, PyInstaller or cx_Freeze packaged Python applications that load compression DLLs from non-standard application directories and trigger PROCESS_MODULE_LOAD events during runtime unpacking
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1560.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1560_002_archive_via_library {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1560.002 - Archive via Library: compression DLL loading by non-archiver processes, PowerShell and Python using in-process compression APIs, scripting interpreter-driven compressed file creation in staging paths. Covers TajMahal, LunarWeb, InvisiMole, SeaDuke TTPs."
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1560.002"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1560/002/"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2025-01-01"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_MODULE_LOAD"
+      and re.regex($e.target.file.full_path, `(?i)(zlib\.dll|zlib1\.dll|zlibwapi\.dll|bzip2\.dll|libbzip2\.dll|libzip\.dll|minizip\.dll)$`)
+      and not re.regex($e.target.file.full_path, `(?i)(system32|syswow64|7-zip|winrar)`)
+      and not re.regex($e.principal.process.file.full_path, `(?i)(7z\.exe|7zg\.exe|winrar\.exe|msiexec\.exe)$`)
+    ) or (
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`)
+      and re.regex($e.target.process.command_line, `(?i)(IO\.Compression|GZipStream|DeflateStream|ZipArchive|ZipFile|ICSharpCode|DotNetZip)`)
+    ) or (
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i)python[0-9]*\.exe$`)
+      and re.regex($e.target.process.command_line, `(?i)(import (zlib|bz2|gzip|zipfile|rarfile|lzma|tarfile)|zlib\.compress|bz2\.compress)`)
+    ) or (
+      $e.metadata.event_type = "FILE_CREATION"
+      and re.regex($e.target.file.full_path, `(?i)\.(gz|bz2|zlib|lzma|xz|lz)$`)
+      and re.regex($e.target.file.full_path, `(?i)(temp|appdata|programdata|users.public)`)
+      and re.regex($e.principal.process.file.full_path, `(?i)(python[0-9]*|ruby|perl|node|java|javaw|wscript|cscript|mshta)\.exe$`)
+    )
+
+  condition:
+    $e
+}

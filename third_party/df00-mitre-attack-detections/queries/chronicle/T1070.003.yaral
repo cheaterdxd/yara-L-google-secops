@@ -1,0 +1,72 @@
+# T1070.003 — Clear Command History
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1070.003 command history clearing using UDM process launch events.
+# Data Sources: Google Chronicle UDM - Process Events, Endpoint telemetry forwarded to Chronicle (CrowdStrike, Carbon Black, SentinelOne, Sysmon via Bindplane)
+# Required Sources: UDM Events - PROCESS_LAUNCH
+# False Positives: Legitimate shell profile customization scripts (e.g., .bashrc or .zshrc) that set HISTSIZE=0 for shared or service accounts on build servers, Security tools performing post-incident remediation that clear history files as part of an approved forensic preservation workflow, Non-interactive PowerShell sessions run by automation frameworks (Ansible, Chef, Puppet) that modify PSReadLine configuration for headless operation
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1070_003_clear_command_history {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1070.003 - Indicator Removal: Clear Command History. Covers PowerShell PSReadLine file manipulation, Linux shell history clearing commands (history -c), environment variable suppression (HISTFILE=, HISTSIZE=0, HISTFILESIZE=0), and direct deletion of .bash_history/.zsh_history files. Associated with TeamTNT, APT41, Aquatic Panda, Kobalos, and Medusa Group ransomware."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.003"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        /* PowerShell PSReadLine manipulation */
+        re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`)
+        and
+        (
+          re.regex($e.target.process.command_line, `(?i)ConsoleHost_history`) or
+          re.regex($e.target.process.command_line, `(?i)PSReadLine`) or
+          re.regex($e.target.process.command_line, `(?i)Get-PSReadlineOption`) or
+          re.regex($e.target.process.command_line, `(?i)Clear-History`) or
+          re.regex($e.target.process.command_line, `(?i)Remove-Item.*[Hh]istory`)
+        )
+      )
+      or
+      (
+        /* Linux shell history clearing */
+        re.regex($e.target.process.file.full_path, `(?i)/(bash|sh|zsh|fish)$`)
+        and
+        (
+          re.regex($e.target.process.command_line, `history\s+-[cw]`) or
+          re.regex($e.target.process.command_line, `HISTFILE=`) or
+          re.regex($e.target.process.command_line, `HISTSIZE=0`) or
+          re.regex($e.target.process.command_line, `HISTFILESIZE=0`)
+        )
+      )
+      or
+      (
+        /* Direct deletion of shell history files */
+        re.regex($e.target.process.file.full_path, `(?i)/(rm|unlink|shred)$`)
+        and
+        (
+          re.regex($e.target.process.command_line, `\.(bash|zsh|ash|fish)_history`) or
+          re.regex($e.target.process.command_line, `ConsoleHost_history\.txt`)
+        )
+      )
+      or
+      (
+        /* PowerShell HistorySavePath via Get-PSReadlineOption - Medusa Group TTP */
+        re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)HistorySavePath`)
+      )
+    )
+
+  condition:
+    $e
+}

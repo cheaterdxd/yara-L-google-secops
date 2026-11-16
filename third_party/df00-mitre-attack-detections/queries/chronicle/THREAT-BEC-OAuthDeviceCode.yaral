@@ -1,0 +1,54 @@
+# THREAT-BEC-OAuthDeviceCode — Business Email Compromise via OAuth Device Code Flow Phishing
+# Tactic: Credential Access, Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle that correlates OAuth device code flow authentication events (with suspicious automation user agents or logins from unexpected countries) with subsequent inbox rule creation containing forwarding or deletion parameters.
+# Data Sources: Microsoft 365 Management Activity Logs via Chronicle ingestion, Azure AD Sign-In Logs via Chronicle UDM
+# Required Sources: UDM events with metadata.event_type USER_LOGIN and EMAIL_TRANSACTION from M365/Azure AD log sources
+# False Positives: IT automation scripts performing legitimate device code authentication for service account provisioning, Users on VPN or traveling who appear to sign in from unexpected countries via device code, Administrators creating inbox rules programmatically as part of email migration or onboarding workflows, Security tools or email hygiene platforms that create inbox rules on behalf of users
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-BEC-OAuthDeviceCode
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule bec_oauth_device_code_phishing {
+  meta:
+    author = "df00tech"
+    description = "Detects OAuth Device Code Flow BEC phishing in Microsoft 365: device code authentication from suspicious clients or anomalous locations, and post-compromise inbox forwarding rule creation. Threat actors: Scattered Spider, Storm-2372, Midnight Blizzard."
+    severity = "CRITICAL"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1078/004/"
+    mitre_attack_tactic = "Initial Access, Persistence"
+    mitre_attack_technique = "T1078.004, T1114.003"
+
+  events:
+    // Event 1: Device code flow sign-in with suspicious user agent or anomalous location
+    (
+      $e1.metadata.event_type = "USER_LOGIN"
+      AND (
+        re.regex($e1.network.http.user_agent, `(?i)(python-requests|curl|wget|Go-http-client|okhttp|axios)`)
+        OR (
+          $e1.extensions.auth.auth_details = "deviceCode"
+          AND NOT re.regex($e1.principal.location.country_or_region, `(?i)^(United Kingdom|United States)$`)
+        )
+      )
+      AND $e1.extensions.auth.auth_details = "deviceCode"
+      AND $e1.target.application = /(?i)(Microsoft|Office|Teams|SharePoint|OneDrive|Exchange)/
+      AND $user = $e1.principal.user.userid
+    )
+    OR
+    // Event 2: Inbox forwarding or deletion rule created (post-BEC follow-on)
+    (
+      $e2.metadata.event_type = "EMAIL_TRANSACTION"
+      AND re.regex($e2.metadata.description, `(?i)(New-InboxRule|Set-InboxRule|Set-Mailbox)`)
+      AND re.regex($e2.about.labels["Parameters"], `(?i)(ForwardTo|DeleteMessage|RedirectTo|ForwardAsAttachmentTo|MoveToFolder)`)
+      AND NOT re.regex($e2.about.labels["Parameters"], `(?i)Junk Email`)
+      AND $user = $e2.principal.user.userid
+    )
+
+  match:
+    $user over 4h
+
+  condition:
+    $e1 and $e2
+}

@@ -1,0 +1,65 @@
+# T1505.003 — Web Shell
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting web shell persistence via three behavioral branches using UDM event fields: (1) web server parent processes (IIS w3wp.exe, Apache httpd, nginx, PHP, Java/Tomcat) spawning command interpreters or reconnaissance utilities indicating web shell execution; (2) script files with web-executable extensions being created in web-accessible directory paths by unexpected processes indicating web shell file drop; (3) web server processes making outbound network connections to external IPs on non-HTTP/HTTPS ports indicating C2 channels through deployed web shells.
+# Data Sources: Google Chronicle SIEM, Chronicle Forwarder (Windows Events), Chronicle Forwarder (Linux Auditd), Microsoft Defender for Endpoint via Chronicle ingestion
+# Required Sources: UDM Events (PROCESS_LAUNCH, FILE_CREATION, NETWORK_CONNECTION)
+# False Positives: Enterprise Java application servers (JBoss EAP, WebLogic, WebSphere) that legitimately spawn Java utility processes or shell scripts for administrative tasks such as thread dump generation or heap analysis, Web-based IDEs or file managers (phpMyAdmin, Adminer, cPanel File Manager) that write PHP/script files to web directories as part of their normal file editing functionality, Container orchestration health checks where Kubernetes liveness probes cause web server processes to initiate outbound HTTP calls to external endpoints on non-standard ports for service mesh telemetry
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1505.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule webshell_t1505_003 {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects web shell installation and execution via web server process anomalies: command interpreter spawning, script file drops to web directories, and unexpected outbound connections from web server processes"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1505.003"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    platform = "Windows, Linux"
+    false_positives = "CI/CD deployments, legitimate app server subprocess execution"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    // Branch 1: Web server spawning shell/utility processes
+    (
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path, `(?i)(w3wp|httpd|nginx|php|php-cgi|php-fpm|tomcat|catalina|java|javaw)\.exe`) or
+        re.regex($e1.target.process.parent_process.file.full_path, `(?i)(w3wp|httpd|nginx|php|php-cgi|php-fpm|tomcat|catalina|java|javaw)\.exe`)
+      )
+      and re.regex($e1.target.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|whoami|net|ipconfig|systeminfo|wmic|nltest|netstat|ping|nslookup)\.exe`)
+    )
+    or
+    // Branch 2: Script file creation in web directories by non-web-server processes
+    (
+      $e1.metadata.event_type = "FILE_CREATION"
+      and (
+        re.regex($e1.target.file.full_path, `(?i)(\\inetpub\\|\\wwwroot\\|\\htdocs\\|\\www\\|\\webapps\\|/var/www/|/public_html/)`) or
+        re.regex($e1.target.file.full_path, `(?i)(\\inetpub|\\wwwroot|\\htdocs|/var/www|/public_html|/webapps)`)
+      )
+      and re.regex($e1.target.file.full_path, `(?i)\.(asp|aspx|ashx|asmx|php|php5|php7|jsp|jspx|cfm|shtml|phtml)$`)
+      and not re.regex($e1.principal.process.file.full_path, `(?i)(w3wp|httpd|nginx|php|msdeploy|devenv|publish)\.exe`)
+    )
+    or
+    // Branch 3: Web server process outbound connection to non-standard external port
+    (
+      $e1.metadata.event_type = "NETWORK_CONNECTION"
+      and re.regex($e1.principal.process.file.full_path, `(?i)(w3wp|php|php-cgi|php-fpm|httpd|nginx|java|javaw)\.exe`)
+      and not net.ip_in_range_cidr($e1.target.ip, "10.0.0.0/8")
+      and not net.ip_in_range_cidr($e1.target.ip, "172.16.0.0/12")
+      and not net.ip_in_range_cidr($e1.target.ip, "192.168.0.0/16")
+      and not net.ip_in_range_cidr($e1.target.ip, "127.0.0.0/8")
+      and $e1.target.port != 80
+      and $e1.target.port != 443
+      and $e1.target.port != 8080
+      and $e1.target.port != 8443
+    )
+
+  condition:
+    $e1
+}

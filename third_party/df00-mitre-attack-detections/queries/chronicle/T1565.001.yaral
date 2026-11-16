@@ -1,0 +1,28 @@
+# T1565.001 — Stored Data Manipulation
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting unauthorized modification of database and configuration files.
+# Data Sources: Endpoint File Events via Chronicle UDM
+# Required Sources: FILE_MODIFICATION
+# False Positives: Software deployment or configuration management tools (Ansible, Chef, Puppet, SCCM) that atomically replace configuration files by writing to a temp file and renaming — creates backup-like patterns with high file counts, Backup agents (Veeam, Veritas, Acronis, Windows Server Backup) that create .bak copies of databases or config files before snapshotting — triggers both the backup-replace and bulk modification patterns, Development CI/CD pipelines (GitHub Actions, Jenkins, GitLab CI) that generate, compile, and write multiple source code or config files in rapid succession during build steps, Antivirus or DLP quarantine operations that move or rename files with modified extensions during remediation workflows, Database maintenance scripts (index rebuilds, VACUUM, CHECKPOINT operations run by scripts) that write temporary files alongside primary database files, Document management systems (SharePoint sync, Dropbox, OneDrive) that batch-sync large numbers of Office documents during initial sync or conflict resolution
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1565.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule stored_data_manipulation {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects unauthorized stored data manipulation (T1565.001)"
+    severity = "HIGH"
+    tactic = "TA0040"
+
+  events:
+    $e.metadata.event_type = "FILE_MODIFICATION"
+    re.regex($e.target.file.full_path, `(?i)\.(sql|db|sqlite|mdb|csv|xlsx|json|config|conf)$`) nocase
+    re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell|wscript|cscript|python|perl|certutil|bitsadmin)`) nocase
+
+  condition:
+    $e
+}

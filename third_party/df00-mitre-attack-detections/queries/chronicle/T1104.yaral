@@ -1,0 +1,109 @@
+# T1104 — Multi-Stage Channels
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules detecting T1104 Multi-Stage Channels.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM), Windows Sysmon ingested via Chronicle forwarder, Microsoft Defender for Endpoint via Chronicle ingestion
+# Required Sources: UDM events (NETWORK_CONNECTION, PROCESS_LAUNCH event types)
+# False Positives: Legitimate enterprise agent software (MDM, DLP, backup) that performs initial registration to a cloud enrollment server and then connects to a separate data transfer endpoint, Browser extension processes or electron-based apps that maintain connections to multiple cloud API endpoints simultaneously for feature functionality, DevOps tooling (Terraform, kubectl, Helm) that contacts a cloud provider control plane API and separately contacts a metrics/logging endpoint during provisioning, Security awareness training platforms that launch from an email client, contact their primary SaaS platform, and separately report completion data to an analytics service
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1104
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1104_multi_stage_channels_single_process {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1104 Multi-Stage Channels: a non-browser process connects to multiple distinct external IPs suggesting first-to-second-stage C2 infrastructure handoff"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1104"
+    severity = "HIGH"
+    priority = "HIGH"
+    rule_version = "1.0"
+    created = "2026-04-17"
+    platforms = "Windows"
+
+  events:
+    $e1.metadata.event_type = "NETWORK_CONNECTION"
+    $e1.principal.hostname = $host
+    $e1.principal.process.file.full_path != /(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|OneDrive\.exe|Dropbox\.exe|Teams\.exe|Outlook\.exe|thunderbird\.exe|svchost\.exe|MsMpEng\.exe|DiagTrack\.exe|wuauclt\.exe|WaaSMedicAgent\.exe|SearchIndexer\.exe|backgroundTaskHost\.exe|RuntimeBroker\.exe)/
+    $e1.principal.process.file.full_path = $proc_path
+    $e1.principal.process.pid = $pid
+    // Filter out RFC1918 and loopback destinations
+    not $e1.target.ip = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.|0\.0\.0\.0|::1)/
+    $e1.target.ip = $first_ip
+
+    $e2.metadata.event_type = "NETWORK_CONNECTION"
+    $e2.principal.hostname = $host
+    $e2.principal.process.file.full_path = $proc_path
+    $e2.principal.process.pid = $pid
+    not $e2.target.ip = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.|0\.0\.0\.0|::1)/
+    $e2.target.ip = $second_ip
+    $second_ip != $first_ip
+
+    $e1.metadata.event_timestamp.seconds <= $e2.metadata.event_timestamp.seconds
+    $e2.metadata.event_timestamp.seconds - $e1.metadata.event_timestamp.seconds <= 86400
+
+  match:
+    $host, $proc_path, $pid over 24h
+
+  outcome:
+    $risk_score = max(if($e2.metadata.event_timestamp.seconds - $e1.metadata.event_timestamp.seconds < 300, 90, 70))
+    $detection_type = "SingleProcessMultiStageC2"
+    $process_name = $proc_path
+    $first_stage_ip = array_distinct($first_ip)
+    $second_stage_ip = array_distinct($second_ip)
+    $hostname = $host
+
+  condition:
+    $e1 and $e2
+}
+
+rule t1104_parent_child_c2_handoff {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1104 Multi-Stage Channels parent-child handoff: parent process contacts external IP, spawns child that contacts a DIFFERENT external IP within 30 minutes"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1104"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    rule_version = "1.0"
+    created = "2026-04-17"
+
+  events:
+    // Parent network connection to external IP
+    $parent_net.metadata.event_type = "NETWORK_CONNECTION"
+    $parent_net.principal.hostname = $host
+    $parent_net.principal.process.pid = $parent_pid
+    $parent_net.principal.process.file.full_path != /(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|svchost\.exe|MsMpEng\.exe)/
+    not $parent_net.target.ip = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.|::1)/
+    $parent_net.target.ip = $parent_ip
+
+    // Child process spawned by parent
+    $proc_create.metadata.event_type = "PROCESS_LAUNCH"
+    $proc_create.principal.hostname = $host
+    $proc_create.principal.process.pid = $parent_pid
+    $proc_create.target.process.pid = $child_pid
+    $proc_create.target.process.file.full_path != /(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|svchost\.exe)/
+
+    // Child network connection to DIFFERENT external IP
+    $child_net.metadata.event_type = "NETWORK_CONNECTION"
+    $child_net.principal.hostname = $host
+    $child_net.principal.process.pid = $child_pid
+    not $child_net.target.ip = /^(10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|192\.168\.|127\.|::1)/
+    $child_net.target.ip = $child_ip
+    $child_ip != $parent_ip
+
+  match:
+    $host, $parent_pid over 30m
+
+  outcome:
+    $risk_score = 95
+    $detection_type = "ParentChildC2Handoff"
+    $parent_c2_ip = array_distinct($parent_ip)
+    $child_c2_ip = array_distinct($child_ip)
+    $hostname = $host
+
+  condition:
+    $parent_net and $proc_create and $child_net
+}

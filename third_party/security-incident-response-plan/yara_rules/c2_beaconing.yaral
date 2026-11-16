@@ -1,0 +1,58 @@
+rule c2_beaconing_detection {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects C2 beaconing: periodic outbound connections at regular intervals (30-300s, <10% jitter deviation) to low-reputation or newly-registered domains"
+    severity = "CRITICAL"
+    priority = "P1"
+    mitre_tactic = "Command and Control"
+    mitre_technique = "T1071"
+    mitre_subtechnique = "T1071.001"
+    reference = "https://attack.mitre.org/techniques/T1071/"
+    additional_techniques = "T1571, T1573, T1008"
+    created = "2024-01-15"
+    version = "1.5"
+
+  events:
+    $beacon.metadata.event_type = "NETWORK_CONNECTION"
+    $beacon.principal.ip = $src_ip
+    $beacon.principal.hostname = $src_host
+    $beacon.target.hostname = $dest_domain
+    $beacon.security_result.action = "ALLOW"
+    not (
+      $beacon.target.hostname = /\.microsoft\.com$|\.windows\.com$|\.office\.com$|\.google\.com$|\.apple\.com$|\.akamai\.net$|\.cloudflare\.com$/i
+    )
+    not (
+      $beacon.target.ip = /^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^192\.168\./
+    )
+    (
+      $beacon.network.destination_port = 443 or
+      $beacon.network.destination_port = 80 or
+      $beacon.network.destination_port = 8080 or
+      $beacon.network.destination_port = 8443 or
+      $beacon.network.destination_port = 4444 or
+      $beacon.network.destination_port = 1337
+    )
+    $beacon.network.sent_bytes < 65536
+    $beacon.network.received_bytes < 65536
+
+  match:
+    $src_ip, $dest_domain over 1h
+
+  condition:
+    #beacon > 8 and
+    stddev($beacon.metadata.event_timestamp.seconds) < 30
+
+  outcome:
+    $risk_score = max(93)
+    $beaconing_host = $src_host
+    $beaconing_ip = $src_ip
+    $c2_domain = $dest_domain
+    $c2_ip = array_distinct($beacon.target.ip)
+    $beacon_count = count($beacon.metadata.id)
+    $beacon_interval_stddev = stddev($beacon.metadata.event_timestamp.seconds)
+    $destination_port = array_distinct($beacon.network.destination_port)
+    $severity_label = "CRITICAL"
+    $playbook = "c2_beaconing_response"
+    $ioc_type = "domain,ip_address,hostname"
+    $containment_action = "isolate_host,block_ip"
+}

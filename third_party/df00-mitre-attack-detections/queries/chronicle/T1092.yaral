@@ -1,0 +1,66 @@
+# T1092 — Communication Through Removable Media
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1092 Communication Through Removable Media using UDM events.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs via Chronicle forwarder, CrowdStrike Falcon via Chronicle ingestion, Carbon Black via Chronicle ingestion
+# Required Sources: UDM Events - FILE_CREATION, UDM Events - PROCESS_LAUNCH
+# False Positives: Corporate imaging workflows where Windows PE environment writes OS installer files to USB drives via DISM or WinPE tools, Legitimate use of portable security scanners (ClamAV portable, Malwarebytes portable) executed from USB by IT helpdesk during malware remediation, Software development workflows where developers run build artifacts directly from USB for quick testing on isolated lab machines without network access
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1092
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1092_CommunicationThroughRemovableMedia {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1092 Communication Through Removable Media - identifies executable or encoded data files written to removable drives, processes executing from removable drives, and rapid file access patterns after USB mount events."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1092"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-13"
+    version = "1.0"
+
+  events:
+    (
+      // Branch 1: Executable or script dropped to USB drive
+      $e1.metadata.event_type = "FILE_CREATION"
+      and (
+        $e1.target.file.full_path = /^[D-Id-i]:\\/i
+      )
+      and (
+        $e1.target.file.full_path = /\.(exe|dll|bat|cmd|ps1|vbs|js|hta|dat|bin|enc|tmp|cfg|db)$/i
+      )
+      and not $e1.principal.process.file.full_path = /explorer\.exe$/i
+      and not $e1.principal.process.file.full_path = /robocopy\.exe$/i
+    )
+    or
+    (
+      // Branch 2: Process executed from removable media path
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        $e1.target.process.file.full_path = /^[D-Id-i]:\\/i
+        or re.regex($e1.target.process.command_line, `[D-Id-i]:\\`)
+      )
+      and not $e1.target.process.file.full_path = /setup\.exe$/i
+      and not $e1.target.process.file.full_path = /install\.exe$/i
+      and not $e1.target.process.file.full_path = /autorun\.exe$/i
+    )
+    or
+    (
+      // Branch 3: Encoded/data file written to USB (C2 staging)
+      $e1.metadata.event_type = "FILE_CREATION"
+      and (
+        $e1.target.file.full_path = /^[D-Id-i]:\\/i
+      )
+      and (
+        $e1.target.file.full_path = /\.(enc|tmp|cfg|dat|bin|db)$/i
+      )
+      and not $e1.principal.process.file.full_path = /explorer\.exe$/i
+      and not $e1.principal.process.file.full_path = /backup\.exe$/i
+    )
+
+  condition:
+    $e1
+}

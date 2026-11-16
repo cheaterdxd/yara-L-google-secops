@@ -1,0 +1,44 @@
+# T1053.007 — Container Orchestration Job
+# Tactic: Execution, Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting suspicious Kubernetes CronJob and Job creation from GKE Control Plane or Kubernetes API server audit logs ingested into Google Security Operations.
+# Data Sources: Google Cloud GKE Control Plane audit logs via Cloud Logging sink to Chronicle, Kubernetes API server audit logs with Chronicle HTTPS ingestion API, Google Security Operations GKE log type: GKE_CONTROLPLANE
+# Required Sources: GKE_CONTROLPLANE UDM log type, K8S_AUDIT UDM log type
+# False Positives: Automated CI/CD GitOps controllers (ArgoCD, Flux) creating Job or CronJob resources using lightweight images in production namespaces, Authorized red team exercises scheduling offensive tooling containers in dedicated assessment clusters, Cluster-level backup CronJobs using privileged containers or hostPath mounts for node-consistent snapshot operations
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1053.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule kubernetes_suspicious_cronjob_job_creation {
+  meta:
+    author = "df00tech"
+    description = "Detects suspicious Kubernetes CronJob or Job creation that may indicate adversary persistence or code execution via container orchestration abuse (T1053.007)"
+    mitre_attack_tactic = "Persistence, Execution"
+    mitre_attack_technique = "T1053.007"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    platform = "GCP / GKE"
+    reference = "https://attack.mitre.org/techniques/T1053/007/"
+
+  events:
+    ($e.metadata.log_type = "GKE_CONTROLPLANE" or
+     $e.metadata.log_type = "K8S_AUDIT")
+    ($e.network.http.method = "POST" or
+     $e.network.http.method = "PUT" or
+     $e.network.http.method = "PATCH")
+    re.regex($e.target.url, `/(cronjobs|jobs)(/|$)`)
+    (
+      re.regex($e.target.resource.attribute.labels["image"], `(?i)(alpine|busybox|ubuntu|debian|kali|python|perl|ruby|php|ncat|netcat|nmap|masscan)`) or
+      re.regex($e.target.resource.attribute.labels["command"], `(?i)(bash -i|/dev/tcp|mkfifo|socat|base64 -d|chmod \+x)`) or
+      $e.target.resource.attribute.labels["host_path"] = "true" or
+      $e.target.resource.attribute.labels["privileged"] = "true" or
+      $e.target.resource.attribute.labels["host_network"] = "true" or
+      re.regex($e.target.resource.attribute.labels["mount_path"], `/var/run/docker\.sock|/proc|/sys`)
+    )
+    not $e.principal.user.userid = /^system:(serviceaccount:kube-system|node:|component:)/
+
+  condition:
+    $e
+}

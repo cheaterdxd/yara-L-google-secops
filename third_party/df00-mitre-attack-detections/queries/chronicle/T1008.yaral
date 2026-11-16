@@ -1,0 +1,52 @@
+# T1008 — Fallback Channels
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1008 Fallback Channels.
+# Data Sources: Chronicle SIEM with Endpoint Detection feeds, Chronicle UDM normalized network events from CrowdStrike, Carbon Black, or Windows Defender ATP
+# Required Sources: network_connection UDM events
+# False Positives: Legitimate software that performs load balancing by rotating through multiple server IPs (e.g., cloud-native apps using service mesh), Patch management tools contacting multiple Windows Update or vendor distribution servers during patch cycles, Helpdesk or remote access tools (e.g., ConnectWise, TeamViewer) with multi-region relay infrastructure may trigger port diversity conditions
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1008_fallback_channels_multi_dest {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects non-browser processes connecting to 3+ distinct external IPs or 3+ distinct ports on C2 fallback ports within 1 hour — indicative of T1008 Fallback Channels behavior."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1008"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.target.port in (53, 80, 443, 4443, 8080, 8443, 8888, 1194, 4444, 9443, 2222, 3128)
+    not $e.target.ip_subnet = "10.0.0.0/8"
+    not $e.target.ip_subnet = "172.16.0.0/12"
+    not $e.target.ip_subnet = "192.168.0.0/16"
+    not $e.target.ip_subnet = "127.0.0.0/8"
+    not $e.target.ip_subnet = "169.254.0.0/16"
+    not $e.principal.process.file.full_path = /(?i)(chrome|firefox|msedge|iexplore|Teams|Slack|Zoom|outlook|MsMpEng|OneDrive|brave|SearchApp|msedgewebview2)\.exe$/
+    $host = $e.principal.hostname
+    $proc = $e.principal.process.file.full_path
+    $dest_ip = $e.target.ip
+    $dest_port = $e.target.port
+
+  match:
+    $host, $proc over 1h
+
+  outcome:
+    $unique_dest_ips = count_distinct($dest_ip)
+    $unique_dest_ports = count_distinct($dest_port)
+    $total_connections = count()
+    $risk_score = if(
+      $unique_dest_ips >= 5 and $unique_dest_ports >= 3, "Critical",
+      if($unique_dest_ips >= 4 or ($unique_dest_ports >= 3 and $total_connections >= 8), "High",
+        if($unique_dest_ips >= 3, "Medium", "Low")))
+
+  condition:
+    $e and ($unique_dest_ips >= 3 or ($unique_dest_ports >= 3 and $total_connections >= 5))
+}

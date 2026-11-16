@@ -1,0 +1,65 @@
+# T1552.006 — Group Policy Preferences
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two complementary YARA-L 2.0 rules for detecting GPP credential harvesting.
+# Data Sources: Google Chronicle SIEM, Microsoft Windows endpoint telemetry via Chronicle forwarder, Google Workspace activity logs (supplementary)
+# Required Sources: PROCESS_LAUNCH UDM events, FILE_READ UDM events
+# False Positives: Group Policy Client Service (svchost.exe hosting gpsvc) and gpupdate.exe access SYSVOL XML files during legitimate policy refresh on all domain-joined endpoints — both are excluded in Rule 2 but verify the exclusion list covers your environment's policy processing binaries., Active Directory health monitoring solutions (Microsoft AD Health Monitor, SolarWinds Server & Application Monitor, Netwrix Auditor) with privileged domain read access regularly scan SYSVOL for configuration drift and compliance reporting — baseline these tool identities in UDM principal fields and suppress., Penetration testing engagements and red team exercises authorized by the organization will generate high-fidelity true-positive alerts for all rule branches — coordinate suppression windows with the security team during scheduled assessments.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1552.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule gpp_credential_harvesting {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Group Policy Preferences credential harvesting via PowerSploit GPP modules, cpassword enumeration, SYSVOL XML file access, and gpprefdecrypt tool execution (T1552.006)"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1552.006"
+    mitre_attack_technique_name = "Unsecured Credentials: Group Policy Preferences"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1552/006/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.metadata.vendor_name = "Microsoft"
+    (
+      re.regex($e.target.process.command_line,
+        `(?i)(Get-GPPPassword|Get-CachedGPPPassword|Find-GPOPassword|Get-GPPAutologon|Get-SiteListPassword)`)
+      or re.regex($e.target.process.command_line, `(?i)cpassword`)
+      or re.regex($e.target.process.command_line, `(?i)gpprefdecrypt`)
+      or (
+        re.regex($e.target.process.command_line, `(?i)SYSVOL`)
+        and re.regex($e.target.process.command_line, `(?i)\.xml`)
+      )
+    )
+
+  condition:
+    $e
+}
+
+rule gpp_sysvol_xml_file_access {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects direct file read access to GPP XML credential files (Groups.xml, ScheduledTasks.xml, DataSources.xml, Printers.xml, Services.xml) in SYSVOL by non-system processes (T1552.006)"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1552.006"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "FILE_READ"
+    $e.metadata.vendor_name = "Microsoft"
+    re.regex($e.target.file.full_path,
+      `(?i)(Groups\.xml|ScheduledTasks\.xml|DataSources\.xml|Printers\.xml|Services\.xml)`)
+    re.regex($e.target.file.full_path, `(?i)(SYSVOL|\\Policies\\)`)
+    not re.regex($e.principal.process.file.full_path,
+      `(?i)(System32\\svchost\.exe|System32\\lsass\.exe|System32\\gpupdate\.exe|System32\\csrss\.exe)`)
+
+  condition:
+    $e
+}

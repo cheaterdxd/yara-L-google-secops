@@ -1,0 +1,57 @@
+# T1027 — Obfuscated Files or Information
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1027 obfuscation techniques across four branches: certutil encode/decode LOLBin abuse, PowerShell Base64/XOR operations, script engine (wscript/cscript/mshta) charcode obfuscation, and cmd.exe caret/variable-expansion obfuscation.
+# Data Sources: Google Chronicle with Windows Sysmon UDM ingestion, Chronicle with Endpoint Detection sensor data
+# Required Sources: UDM process events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: PKI administration tasks where certutil.exe legitimately decodes certificate enrollment responses or tests certificate chains, Automated Windows administration via PowerShell DSC or scheduled tasks using -EncodedCommand for multiline scripts passed through Task Scheduler, Legacy batch scripts from enterprise software vendors (e.g., Oracle Forms, SAP) that use cmd caret escaping for special character handling in install scripts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_obfuscated_files_or_information {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1027 Obfuscated Files or Information — certutil encode/decode, PowerShell Base64/XOR, script charcode obfuscation, cmd caret/variable expansion."
+    mitre_attack_technique = "T1027"
+    mitre_attack_tactic = "Defense Evasion"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    reference = "https://attack.mitre.org/techniques/T1027/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path != ""
+
+    (
+      // Branch 1: certutil encode/decode
+      (
+        re.regex($e.target.process.file.full_path, `(?i)certutil\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(-decode|-decodehex|-encodehex|-urlcache)`)
+      ) or
+
+      // Branch 2: PowerShell Base64/XOR
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(FromBase64String|ToBase64String|-EncodedCommand|-enc\s+|-ec\s+|bxor|-bxor)`)
+      ) or
+
+      // Branch 3: Script engines with charcode obfuscation
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(wscript|cscript|mshta)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(chr\(|String\.fromCharCode|unescape\(|escape\(|eval\()`)
+      ) or
+
+      // Branch 4: cmd.exe caret obfuscation
+      (
+        re.regex($e.target.process.file.full_path, `(?i)cmd\.exe$`) and
+        re.regex($e.target.process.command_line, `(\^[a-zA-Z0-9]){4,}`)
+      )
+    )
+
+  condition:
+    $e
+}

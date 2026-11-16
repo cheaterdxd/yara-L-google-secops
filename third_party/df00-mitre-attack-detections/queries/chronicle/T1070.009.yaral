@@ -1,0 +1,85 @@
+# T1070.009 — Clear Persistence
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1070.009 Clear Persistence by monitoring UDM registry deletion events in known Windows persistence key paths, process launch events for sc.exe, schtasks.exe, net.exe, and PowerShell with persistence-clearing arguments, and USER_DELETION events corresponding to Windows Security Event 4726.
+# Data Sources: Windows Sysmon via Chronicle Forwarder, Windows Security Events via Chronicle, Google Chronicle UDM
+# Required Sources: UDM Events (REGISTRY_DELETION, PROCESS_LAUNCH, USER_DELETION)
+# False Positives: Enterprise software deployment pipelines that remove Run key entries and scheduled tasks after software provisioning tasks complete, IT operations teams using PowerShell scripts to decommission Windows services and accounts during system retirement procedures, Endpoint security tools performing remediation after detecting malware, which includes cleaning persistence mechanisms
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1070_009_clear_persistence {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1070.009 - Clear Persistence: removal of registry persistence keys, services, scheduled tasks, or user accounts"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.009"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+
+  events:
+    (
+      /* Registry deletion in persistence key paths */
+      (
+        $e.metadata.event_type = "REGISTRY_DELETION" and
+        (
+          re.regex($e.target.registry.registry_key, `(?i)(SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run|SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon|SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options|SYSTEM\\CurrentControlSet\\Services|SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders|SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache)`) = true
+        )
+      )
+      or
+      /* Service deletion via sc.exe */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex($e.principal.process.file.full_path, `(?i)sc\.exe$`) = true and
+        (
+          re.regex($e.target.process.command_line, `(?i)(delete|stop)`) = true
+        )
+      )
+      or
+      /* PowerShell persistence cleanup */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`) = true and
+        (
+          re.regex($e.target.process.command_line, `(?i)(Remove-Service|Unregister-ScheduledTask|sc\.exe\s+delete|Remove-LocalUser|schtasks.*\/delete)`) = true
+        )
+      )
+      or
+      /* schtasks.exe deletion */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex($e.principal.process.file.full_path, `(?i)schtasks\.exe$`) = true and
+        re.regex($e.target.process.command_line, `(?i)\/delete`) = true
+      )
+      or
+      /* net.exe account deletion */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex($e.principal.process.file.full_path, `(?i)net1?\.exe$`) = true and
+        re.regex($e.target.process.command_line, `(?i)user.*\/delete`) = true
+      )
+      or
+      /* Windows Security Event 4726 - User Account Deleted */
+      (
+        $e.metadata.event_type = "USER_DELETION"
+      )
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(85)
+    $hostname = array_distinct($e.principal.hostname)
+    $user = array_distinct($e.principal.user.userid)
+    $process = array_distinct($e.principal.process.file.full_path)
+    $command = array_distinct($e.target.process.command_line)
+    $registry_key = array_distinct($e.target.registry.registry_key)
+
+  condition:
+    $e
+}

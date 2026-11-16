@@ -1,0 +1,69 @@
+# T1563 — Remote Service Session Hijacking
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1563 Remote Service Session Hijacking across four attack patterns: RDP tscon session hijacking (direct and indirect), SSH agent socket abuse via SSH_AUTH_SOCK, SSH ControlMaster/ControlPath multiplexing attacks, and TTY file descriptor hijacking using /proc/pid/fd, reptyr, or injcode.
+# Data Sources: Google Chronicle SIEM, Endpoint Detection (EDR), Windows Event Logs via Chronicle forwarder, Linux Auditd via Chronicle forwarder
+# Required Sources: UDM Events (process_launch entity)
+# False Positives: Legitimate system administrators using tscon.exe from SYSTEM context during scheduled maintenance windows on terminal server environments, CI/CD pipeline agents using SSH ControlMaster multiplexing for efficient deployment operations across multiple target hosts, Authorized red team exercises or penetration testing activities involving session hijacking techniques within scope of engagement
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1563
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1563_remote_service_session_hijacking {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects remote service session hijacking via RDP tscon abuse, SSH agent socket manipulation, SSH ControlMaster/ControlPath attacks, and TTY file descriptor hijacking"
+    reference = "https://attack.mitre.org/techniques/T1563/"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1563"
+    mitre_attack_sub_technique = "T1563.001, T1563.002"
+    created = "2026-04-21"
+    version = "1.0"
+
+  events:
+    (
+      /* RDP tscon hijack - direct execution */
+      ($e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i).*tscon\.exe$`))
+
+      or
+
+      /* RDP tscon hijack - via cmd/powershell */
+      ($e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i).*(cmd|powershell)\.exe$`)
+      and re.regex($e.target.process.command_line, `(?i).*tscon.*`))
+
+      or
+
+      /* SSH agent socket abuse */
+      ($e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.command_line, `.*SSH_AUTH_SOCK.*`)
+      and re.regex($e.target.process.command_line, `.*(export|env|printenv|cat /proc).*`)
+      and not re.regex($e.target.process.file.full_path, `(?i).*(sshd|ssh-agent)$`))
+
+      or
+
+      /* SSH ControlMaster/ControlPath multiplexing abuse */
+      ($e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i).*[/\\]ssh(\.exe)?$`)
+      and re.regex($e.target.process.command_line, `(?i).*(ControlMaster|ControlPath|-S /tmp).*`)
+      and not re.regex($e.principal.process.file.full_path, `(?i).*(sshd|ansible|fabric).*`))
+
+      or
+
+      /* TTY/fd hijack via /proc or known tools */
+      ($e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e.target.process.command_line, `.*/proc/[0-9]+/fd.*`)
+        or re.regex($e.target.process.command_line, `(?i).*(reptyr|injcode).*`)
+        or re.regex($e.target.process.command_line, `.*/dev/pts/.*`)
+      ))
+    )
+
+  condition:
+    $e
+}

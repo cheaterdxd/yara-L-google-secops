@@ -1,0 +1,49 @@
+# T1505.001 — SQL Stored Procedures
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1505.001 SQL stored procedure persistence across three UDM event types: PROCESS_LAUNCH events where SQL Server spawns shell interpreters (xp_cmdshell indicator), FILE_CREATION events from SQL Server processes writing outside standard SQL directories (CLR assembly staging), and REGISTRY_MODIFICATION events targeting SQL Server configuration keys that enable xp_cmdshell or CLR assembly execution.
+# Data Sources: Google Chronicle UDM, Windows Event Forwarding via Chronicle Ingestion, CrowdStrike Falcon via Chronicle Integration, Microsoft Defender for Endpoint via Chronicle Integration
+# Required Sources: UDM events: PROCESS_LAUNCH, FILE_CREATION, REGISTRY_MODIFICATION
+# False Positives: Legitimate SQL Server Agent job steps configured by DBAs to execute PowerShell scripts for automated backup verification or index maintenance, SQL Server Integration Services (SSIS) packages writing staging files to non-default paths during ETL processing initiated from sqlservr.exe, Software deployment tools (SCCM, Ansible) modifying SQL Server registry keys during planned configuration management or patching windows
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1505.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule sql_stored_procedure_persistence {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects SQL Server stored procedure abuse for persistence: xp_cmdshell OS command execution, CLR assembly file drops, and startup procedure/config registry changes (T1505.001)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1505.001"
+    reference = "https://attack.mitre.org/techniques/T1505/001/"
+    false_positives = "SQL Agent maintenance jobs, DBA scripts, SSRS rendering processes"
+
+  events:
+    // Pattern 1: Shell process spawned by SQL Server (xp_cmdshell)
+    (
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      $e1.principal.process.file.full_path = /(?i)(sqlservr|sqlagent)\.exe$/
+      $e1.target.process.file.full_path = /(?i)(cmd|powershell|wscript|cscript|mshta|certutil|bitsadmin|rundll32|net|net1|whoami|ipconfig)\.exe$/
+    )
+    OR
+    // Pattern 2: SQL Server writing files outside default directories (CLR assembly drop)
+    (
+      $e1.metadata.event_type = "FILE_CREATION"
+      $e1.principal.process.file.full_path = /(?i)(sqlservr|sqlagent)\.exe$/
+      not $e1.target.file.full_path = /(?i)(Microsoft SQL Server|MSSQL)\/
+    )
+    OR
+    // Pattern 3: Registry changes enabling xp_cmdshell, CLR, or startup procedures
+    (
+      $e1.metadata.event_type = "REGISTRY_MODIFICATION"
+      $e1.target.registry.registry_key = /(?i)(SQL Server|MSSQLSERVER|SQLServer)/
+      $e1.target.registry.registry_value_name = /(?i)(xp_cmdshell|clr enabled|startup|CLR)/
+    )
+
+  condition:
+    $e1
+}

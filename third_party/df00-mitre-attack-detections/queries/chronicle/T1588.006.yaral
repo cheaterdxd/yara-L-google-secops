@@ -1,0 +1,94 @@
+# T1588.006 — Vulnerabilities
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules covering all branches of T1588.006 indirect detection using the UDM (Unified Data Model).
+# Data Sources: Chronicle Unified Data Model (UDM) — PROCESS_LAUNCH, NETWORK_CONNECTION, FILE_CREATION event types, Google Chronicle forwarder with Windows endpoint telemetry (CrowdStrike, Carbon Black, SentinelOne, or Microsoft Defender for Endpoint via Chronicle ingestion), Chronicle network sensor or proxy log ingestion for NETWORK_CONNECTION events with hostname enrichment
+# Required Sources: UDM event type: PROCESS_LAUNCH (target.process.command_line, target.process.file.full_path), UDM event type: NETWORK_CONNECTION (target.hostname, principal.process.file.full_path), UDM event type: FILE_CREATION (target.file.full_path)
+# False Positives: Authorized red team operators executing Metasploit Framework or searchsploit — correlate alert timestamp and endpoint hostname against the red team engagement calendar and declared source IPs; confirmed engagements can be suppressed via rule exclusion on principal.hostname., Threat intelligence and malware research teams browsing exploit databases on dedicated analysis VMs — these VMs are typically isolated network segments; confirm whether the principal.ip falls within the analysis subnet before escalating., Automated vulnerability assessment tools running nuclei in CI/CD pipelines or scheduled scan jobs against pre-production infrastructure — the parent process chain will reflect the CI runner or task scheduler; correlate with the asset's role tag in CMDB., Developers creating CVE-themed demo applications, security blog posts, or conference talk materials — the file creation path (e.g., home directory, desktop, Downloads) and surrounding file activity (git clone, editor processes) can help distinguish intent from offensive staging.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1588.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+// T1588.006 — Vulnerability Research: Chronicle YARA-L 2.0 Detection Bundle
+// Three rules covering exploit site access, exploit tool execution, and CVE file creation.
+// Deploy all three rules to Chronicle for complete coverage.
+
+rule t1588_006_exploit_site_access {
+  meta:
+    author = "Detection Engineering"
+    description = "T1588.006 Branch 1 — Internal endpoint connecting to a known exploit repository or vulnerability database"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1588.006"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    re.regex($e.target.hostname,
+      `(?i)(exploit\-db\.com|packetstormsecurity\.com|sploitus\.com|0day\.today|vulners\.com|cxsecurity\.com|seebug\.org|bugs\.chromium\.org)`
+    )
+    not re.regex($e.principal.process.file.full_path,
+      `(?i)(\\svchost\.exe$|\\lsass\.exe$|\\services\.exe$)`
+    )
+
+  condition:
+    $e
+}
+
+rule t1588_006_exploit_tool_execution {
+  meta:
+    author = "Detection Engineering"
+    description = "T1588.006 Branch 2 — Exploit toolchain execution: searchsploit, Metasploit, nuclei with CVE templates, or CVE PoC scripts via interpreter"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1588.006"
+    severity = "HIGH"
+    confidence = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.command_line, `(?i)searchsploit`)
+      or re.regex($e.target.process.command_line, `(?i)msfconsole`)
+      or re.regex($e.target.process.command_line, `(?i)msfvenom`)
+      or (
+        re.regex($e.target.process.command_line, `(?i)nuclei`) and
+        re.regex($e.target.process.command_line, `(?i)(cve|\-t\s+cves)`)
+      )
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)(python(3)?\.exe$|ruby(\.exe)?$|perl(\.exe)?$)`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(poc\.py|exploit\.py|exploit\.rb|exploit\.pl|CVE\-20[0-9]{2}\-[0-9]+|cve\-20[0-9]{2}\-[0-9]+)`
+        )
+      )
+    )
+
+  condition:
+    $e
+}
+
+rule t1588_006_cve_file_creation {
+  meta:
+    author = "Detection Engineering"
+    description = "T1588.006 Branch 3 — CVE-named, exploit-named, or 0day-named script or binary written to disk"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1588.006"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    re.regex($e.target.file.full_path,
+      `(?i)(CVE\-20[0-9]{2}\-[0-9]+|[/\\]poc\.|[/\\]exploit\.|0day\.)`
+    )
+    re.regex($e.target.file.full_path,
+      `(?i)\.(py|rb|sh|ps1|pl|exe|c|cpp)$`
+    )
+
+  condition:
+    $e
+}

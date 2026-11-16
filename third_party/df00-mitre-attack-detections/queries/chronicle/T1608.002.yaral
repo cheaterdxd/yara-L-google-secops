@@ -1,0 +1,29 @@
+# T1608.002 — Upload Tool
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1608.002 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Web Proxy, Google Workspace
+# Required Sources: NETWORK_HTTP, PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Security teams running authorized penetration tests or red team exercises downloading offensive tooling to test endpoints, IT administrators downloading PsExec, SysInternals suite, or network scanners (Nmap, Netscan) for legitimate diagnostics, Developers downloading open-source security research tools (BloodHound for AD auditing, Impacket for protocol testing) for authorized use, Bug bounty researchers or internal security engineers staging tools on shared infrastructure for assessments, Incident response teams deploying DFIR toolkits from an internal staging server during an active investigation
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1608.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_stage_capabilities {
+  meta:
+    author = "Argus"
+    description = "Detects staging of capabilities from external infrastructure"
+    severity = "HIGH"
+    technique = "T1608"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    (
+      re.regex($e.target.url, `\.(exe|dll|bin|ps1|bat|vbs|hta|sh|elf)($|\?)`) nocase or
+      re.regex($e.target.hostname, `transfer\.sh|paste\.ee|gofile\.io|anonfiles|temp\.sh`) nocase
+    )
+    $e.principal.process.file.full_path != ""
+  condition:
+    $e
+}

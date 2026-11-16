@@ -1,0 +1,31 @@
+# T1547.007 — Re-opened Applications
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting file creation or modification events targeting com.apple.loginwindow plist files in macOS ByHost directory.
+# Data Sources: Chronicle macOS endpoint telemetry, Google Chronicle UDM file events from macOS agents
+# Required Sources: UDM events with FILE_CREATION or FILE_MODIFICATION event types
+# False Positives: Normal macOS GUI logout with session restore checkbox resulting in routine plist file writes, MDM-managed Macs with policies that periodically reset or manage login window preferences (Jamf, Mosyle, Kandji), User-initiated application management or macOS system migration tools that read/write ByHost preferences
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1547.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule macos_loginwindow_plist_persistence {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects creation or modification of macOS loginwindow plist files used for re-opened application persistence (T1547.007)"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1547.007"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION" or $e.metadata.event_type = "FILE_MODIFICATION"
+    $e.target.file.full_path = /\/Library\/Preferences\/ByHost\/com\.apple\.loginwindow\./
+    $e.principal.asset.platform_software.platform = "LINUX" or
+    $e.principal.asset.platform_software.platform = "MAC"
+
+  condition:
+    $e
+}

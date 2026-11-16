@@ -1,0 +1,111 @@
+# T1499.002 — Service Exhaustion Flood
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules detecting T1499.002 Service Exhaustion Flood.
+# Data Sources: Google Cloud HTTP Load Balancer logs (via Chronicle ingestion), Palo Alto Networks PAN-OS (via Chronicle Palo Alto ingestion parser), Fortinet FortiGate (via Chronicle Fortinet ingestion parser), AWS WAF and ALB access logs (via Chronicle AWS ingestion), Cloudflare WAF logs (via Chronicle Cloudflare ingestion), UDM NETWORK_HTTP events from any ingested web proxy or load balancer
+# Required Sources: UDM events (NETWORK_HTTP type), UDM events (NETWORK_CONNECTION and GENERIC_EVENT types for security alerts)
+# False Positives: Cloud provider health checks and load balancer probes from shared IP pools (AWS ELB health checker, GCP health check probes) that issue hundreds of requests per minute against application endpoints from a small set of internal IPs., Content delivery network (CDN) origin pull requests where the CDN consolidates traffic from thousands of end users and forwards them as a burst from a small number of CDN PoP IPs, making legitimate traffic appear as a flood., Automated regression testing pipelines (GitHub Actions, CircleCI) that execute load or stress tests against staging environments which share Chronicle log ingestion with production, causing alert fatigue during nightly test runs., SaaS application webhooks with retry logic that attempt to deliver failed notifications repeatedly from a single IP within a short window if the destination is temporarily unavailable.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1499.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1499_002_service_exhaustion_flood_http {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1499.002 Service Exhaustion Flood: HTTP flood attacks characterized by high request volume from a single source IP against a web server over a 5-minute window. Covers single-resource floods, simple floods, and service degradation patterns."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1499.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+    created = "2026-04-19"
+    platforms = "Windows, Linux, GCP, AWS"
+
+  events:
+    // Web access log events — HTTP requests
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.principal.ip != ""
+    $e.target.hostname != ""
+
+    // Capture fields for aggregation
+    $src_ip = $e.principal.ip
+    $target_host = $e.target.hostname
+    $status_code = $e.network.http.response_code
+    $uri = $e.target.url
+
+  match:
+    $src_ip, $target_host over 5m
+
+  outcome:
+    $total_requests = count($e.metadata.id)
+    $unique_uris = count_distinct($uri)
+    $status_5xx_count = sum(if($status_code >= 500, 1, 0))
+    $status_429_count = sum(if($status_code = 429, 1, 0))
+    $requests_per_second = math.round(count($e.metadata.id) / 300.0, 2)
+    $flood_type = if(
+      count_distinct($uri) = 1 and count($e.metadata.id) > 500,
+        "Single-Resource HTTP Flood",
+      if(
+        count($e.metadata.id) > 1000 and sum(if($status_code >= 500, 1, 0)) > 100,
+          "Service Degradation via HTTP Flood",
+        "HTTP Request Flood"
+      )
+    )
+    $risk_score = if(
+      count($e.metadata.id) > 2000 or sum(if($status_code >= 500, 1, 0)) > 500, 95,
+      if(
+        count($e.metadata.id) > 1000 or sum(if($status_code >= 500, 1, 0)) > 200, 75,
+        55
+      )
+    )
+
+  condition:
+    #e > 500 or $status_5xx_count > 100
+}
+
+rule t1499_002_service_exhaustion_flood_network_alerts {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1499.002 Service Exhaustion Flood via network security alerts (firewall, IDS/IPS) reporting flood, DoS, SSL renegotiation, or connection exhaustion events from a single source."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1499.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+    created = "2026-04-19"
+
+  events:
+    // Network security device alerts
+    $alert.metadata.event_type = "NETWORK_CONNECTION" or
+    $alert.metadata.event_type = "GENERIC_EVENT"
+    $alert.metadata.product_event_type != ""
+
+    // Match flood/DoS related signatures
+    (
+      re.regex($alert.metadata.description, `(?i)(flood|denial.of.service|ssl.renegotiation|connection.limit|http.flood|dos.attack|rate.limit)`) or
+      re.regex($alert.metadata.product_event_type, `(?i)(flood|dos|renegotiation|conn.limit|syn.flood)`) or
+      re.regex($alert.security_result.summary, `(?i)(flood|denial|dos|renegotiation|exhaustion)`)
+    )
+
+    // High or critical severity network alerts only
+    $alert.security_result.severity = "HIGH" or
+    $alert.security_result.severity = "CRITICAL"
+
+    $src_ip = $alert.principal.ip
+    $dst_ip = $alert.target.ip
+    $alert_name = $alert.security_result.summary
+
+  match:
+    $src_ip, $dst_ip over 5m
+
+  outcome:
+    $alert_count = count($alert.metadata.id)
+    $unique_ports = count_distinct($alert.target.port)
+    $flood_type = concat("Network_Alert: ", array_first(array_distinct($alert_name)))
+    $risk_score = 85
+
+  condition:
+    #alert > 5
+}

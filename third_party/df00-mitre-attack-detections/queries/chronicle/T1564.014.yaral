@@ -1,0 +1,86 @@
+# T1564.014 — Extended Attributes
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Extended Attribute abuse (T1564.014) using UDM process launch events.
+# Data Sources: Google Chronicle UDM (Unified Data Model), macOS Endpoint Security via Chronicle connector, Linux auditd ingested via Chronicle Forwarder, CrowdStrike Falcon EDR via Chronicle ingestion
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Enterprise MDM solutions (Jamf, Kandji, Microsoft Intune for macOS) that programmatically manage xattr metadata on managed device files as part of policy enforcement and configuration profile application, Developer toolchain scripts that use xattr to tag build artifacts with versioning or signing metadata — commonly seen in Xcode build phases calling xattr -w com.custom.buildversion on output binaries, Linux filesystem administrative tasks (e.g., Samba share management using setfattr to apply DOS attributes, POSIX ACL tools calling setfattr with system.posix_acl_access namespace values)
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564.014
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1564_014_extended_attribute_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Extended Attribute (xattr/setfattr/getfattr) abuse for payload staging and execution evasion on macOS and Linux (T1564.014)"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1564.014"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1564/014/"
+    created = "2026-04-21"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.principal.user.userid = $user
+    $e.target.process.command_line = $cmdline
+
+    (
+      // macOS: xattr write — embedding payload
+      (
+        re.regex($e.target.process.file.full_path, `/xattr$`) and
+        re.regex($e.target.process.command_line, `\s(-w|--set|-wx)\s`)
+      ) or
+      // Linux: setfattr — writing user-namespace attributes
+      (
+        re.regex($e.target.process.file.full_path, `/setfattr$`) and
+        re.regex($e.target.process.command_line, `\s-n\s`)
+      ) or
+      // Linux: getfattr extraction with raw value output
+      (
+        re.regex($e.target.process.file.full_path, `/getfattr$`) and
+        re.regex($e.target.process.command_line, `(--only-values|-e\s)`)
+      ) or
+      // macOS: xattr read — retrieving stored payload
+      (
+        re.regex($e.target.process.file.full_path, `/xattr$`) and
+        re.regex($e.target.process.command_line, `\s(-p|--print)\s`)
+      ) or
+      // Interpreter spawned from xattr/getfattr parent chain with decode/exec patterns
+      (
+        re.regex($e.target.process.file.full_path, `/(bash|sh|zsh|python3?|perl|ruby)$`) and
+        re.regex($e.target.process.parent_process.file.full_path, `/(xattr|getfattr|bash|sh|zsh)$`) and
+        (
+          re.regex($e.target.process.parent_process.command_line, `(xattr\s+-p|getfattr\s+--only-values)`) or
+          re.regex($e.target.process.command_line, `(base64\s+-d|base64\s+--decode|\|bash|\|\s*sh|\|\s*python|eval\(|exec\()`)
+        )
+      )
+    )
+
+    // Enrich: flag non-standard namespaces (exclude known benign Apple xattr names)
+    not re.regex($e.target.process.command_line,
+      `(com\.apple\.quarantine|com\.apple\.metadata|com\.apple\.FinderInfo|com\.apple\.lastuseddate|com\.apple\.ResourceFork)`
+    )
+
+  match:
+    $hostname, $user over 30m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($cmdline, `(base64|-d|--decode|frombase64|b64decode)`) and
+         re.regex($cmdline, `(\|bash|\|sh|\|python|eval\(|exec\()`), 90,
+      if(re.regex($cmdline, `(\|bash|\|sh|\|python|eval\(|exec\()`), 75,
+      if(re.regex($cmdline, `(user\.|trusted\.|security\.)`), 60,
+      50))
+    )
+    $has_base64 = re.regex($cmdline, `(base64|b64decode|frombase64)`)
+    $has_exec_pipe = re.regex($cmdline, `(\|bash|\|sh|\|python|eval\(|exec\()`)
+    $is_write = re.regex($cmdline, `(-w\s|--set\s|-wx\s|setfattr)`)
+    $is_read = re.regex($cmdline, `(-p\s|--print\s|--only-values)`)
+
+  condition:
+    $e
+}

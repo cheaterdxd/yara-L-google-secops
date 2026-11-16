@@ -1,0 +1,40 @@
+# T1546.013 — PowerShell Profile
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting PowerShell profile file creation events initiated by processes outside the expected set of editors and PowerShell itself.
+# Data Sources: Google Chronicle via Windows Sysmon or Defender for Endpoint UDM ingestion
+# Required Sources: UDM FILE_CREATION events
+# False Positives: Enterprise configuration management systems (Desired State Configuration, Group Policy scripts) that write standardised profiles to system PowerShell directories, PowerShell-based deployment frameworks that bootstrap module paths by modifying profile.ps1 during software rollout, Developers using unconventional editors (Emacs, Helix, JetBrains IDEs) not in the process exclusion list that legitimately edit their own profiles
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.013
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule powershell_profile_persistence_t1546_013 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects creation or modification of PowerShell profile scripts by unexpected processes (T1546.013 — Event Triggered Execution: PowerShell Profile)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1546.013"
+    reference = "https://attack.mitre.org/techniques/T1546/013/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    $e.principal.hostname != ""
+    (
+      re.regex($e.target.file.full_path, `(?i)(Microsoft\.PowerShell_profile\.ps1|Microsoft\.VSCode_profile\.ps1|Microsoft\.PowerShellISE_profile\.ps1)`) or
+      re.regex($e.target.file.full_path, `(?i)(^|\\)profile\.ps1$`) or
+      (
+        re.regex($e.target.file.full_path, `(?i)(WindowsPowerShell|\\PowerShell\\)`) and
+        re.regex($e.target.file.full_path, `(?i)\.ps1$`)
+      )
+    )
+    not re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|notepad\.exe|code\.exe|devenv\.exe|vim\.exe|nano\.exe|notepad\+\+\.exe|sublime_text\.exe)$`)
+
+  condition:
+    $e
+}

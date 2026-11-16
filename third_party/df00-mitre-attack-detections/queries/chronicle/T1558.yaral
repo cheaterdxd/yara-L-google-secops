@@ -1,0 +1,69 @@
+# T1558 — Steal or Forge Kerberos Tickets
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1558 Steal or Forge Kerberos Tickets using UDM normalized event fields.
+# Data Sources: Chronicle UDM (Windows Security Events via Forwarder or API ingestion), Chronicle UDM (Sysmon or EDR process telemetry)
+# Required Sources: UDM Events (user_resource_access, process_launch)
+# False Positives: Organizations with AD mixed-mode environments still supporting legacy RC4 encryption will see elevated 4769 RC4 events from legitimate clients, IT automation tools using service accounts with SPNs for scheduled tasks may generate Kerberoasting-like patterns, Domain admin activity during AD migrations or security assessments that involve SPN enumeration, Authorized penetration tests — no suppression by default, correlate with approved test windows
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1558
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1558_steal_forge_kerberos_tickets {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1558 Steal or Forge Kerberos Tickets: Kerberoasting, AS-REP Roasting, Golden Ticket, and Kerberos attack tool execution"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1558"
+    mitre_attack_sub_techniques = "T1558.001, T1558.002, T1558.003, T1558.004"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1558/"
+    created = "2026-01-01"
+    version = "1.0"
+
+  events:
+    (
+      // Pattern 1 & 2 & 3: Kerberos protocol anomalies (4768/4769)
+      $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+      and $e.metadata.product_event_type in ("4768", "4769")
+      and (
+        // Kerberoasting: RC4 TGS request for service account
+        (
+          $e.metadata.product_event_type = "4769"
+          and $e.target.resource.attribute.labels["ticket_encryption_type"] in ("0x17", "0x18")
+          and not re.regex($e.target.resource.name, `.*\$$`)
+          and not $e.target.resource.name in ("krbtgt", "kadmin/changepw")
+          and not $e.principal.ip in ("::1", "127.0.0.1", "-")
+        )
+        or
+        // AS-REP Roasting: Pre-auth disabled TGT
+        (
+          $e.metadata.product_event_type = "4768"
+          and $e.target.resource.attribute.labels["pre_authentication_type"] = "0"
+          and $e.target.resource.attribute.labels["ticket_encryption_type"] in ("0x17", "0x18")
+        )
+        or
+        // Golden Ticket indicator: RC4 TGT in AES-enforced domain
+        (
+          $e.metadata.product_event_type = "4768"
+          and $e.target.resource.attribute.labels["ticket_encryption_type"] in ("0x17", "0x18")
+          and not $e.principal.ip in ("::1", "127.0.0.1", "-")
+        )
+      )
+    )
+    or
+    (
+      // Pattern 4: Kerberos attack tool process execution
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e.target.process.command_line, `(?i)(rubeus|kerberoast|asreproast|getuserspns|getnpusers|sekurlsa::tickets|kerberos::golden|kerberos::silver|kerberos::ptt|\.kirbi|ticketer\.py|tgtdeleg|kekeo)`)
+        or $e.target.process.file.full_path matches "/(?i)(rubeus\.exe|kekeo\.exe)$/"
+      )
+    )
+
+  condition:
+    $e
+}

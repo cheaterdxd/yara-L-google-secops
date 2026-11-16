@@ -1,0 +1,27 @@
+# T1593.002 — Search Engines
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule for Search Engines (T1593.002).
+# Data Sources: Google Chronicle SIEM, Chronicle UDM
+# Required Sources: NETWORK_HTTP, NETWORK_CONNECTION
+# False Positives: Legitimate users reaching public web content via normal search engine queries that happen to contain sensitive keywords (e.g., searching for 'admin portal login guide' and landing on your documentation), Security researchers and authorized penetration testers performing scheduled reconnaissance assessments against your domains, Search engine crawlers (Googlebot, Bingbot, DuckDuckBot) probing robots.txt, sitemap.xml, and other indexed paths as part of normal site indexing, Automated vulnerability scanners (Qualys, Nessus, Burp Suite Enterprise) probing for sensitive file paths during authorized scheduled scans
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1593.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1593_002_search_engines {
+  meta:
+    author = "df00tech"
+    description = "Detects Search Engines (T1593.002)"
+    mitre_attack_tactic = "TA0043"
+    mitre_attack_technique = "T1593.002"
+    confidence = "low"
+    severity = "medium"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.principal.ip != ""
+  condition:
+    $e
+}

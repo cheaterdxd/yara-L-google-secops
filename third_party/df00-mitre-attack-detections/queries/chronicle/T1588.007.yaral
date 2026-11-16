@@ -1,0 +1,49 @@
+# T1588.007 — Artificial Intelligence
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle that detects non-browser processes initiating network connections to known AI API service endpoints.
+# Data Sources: Google Chronicle UDM, Chronicle Forwarder (Windows Endpoint), Chronicle Forwarder (Proxy/Web Gateway), VirusTotal Enterprise (enrichment)
+# Required Sources: udm_events (NETWORK_CONNECTION), udm_events (PROCESS_LAUNCH)
+# False Positives: Developers on developer-designated machines running AI-integrated tooling via Python or Node.js, Security operations tooling that calls AI APIs for enrichment or summarization, Approved automation pipelines with documented AI API integration, IT support scripts that use AI for troubleshooting assistance
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1588.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1588_007_ai_api_programmatic_access {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects programmatic non-browser access to known AI service APIs from suspicious initiating processes, indicating potential adversarial use of AI tools for attack preparation (T1588.007)"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1588.007"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $network.metadata.event_type = "NETWORK_CONNECTION"
+    $network.principal.hostname != ""
+    $network.target.hostname = /(?i)(api\.openai\.com|api\.anthropic\.com|generativelanguage\.googleapis\.com|api\.cohere\.ai|api-inference\.huggingface\.co|api\.mistral\.ai|api\.together\.xyz|api\.groq\.com|api\.perplexity\.ai|api\.replicate\.com|api\.stability\.ai|api\.ai21\.com|inference\.azure\.com)/
+    $network.principal.process.file.full_path = /(?i)(python\.exe|python3\.exe|python3|powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|curl\.exe|wget\.exe|node\.exe|node|mshta\.exe|regsvr32\.exe|rundll32\.exe|wmic\.exe|msbuild\.exe)/
+    $network.target.port = 443
+
+    $network.principal.hostname = $hostname
+    $network.principal.user.userid = $user
+    $network.principal.process.file.full_path = $proc
+    $network.target.hostname = $ai_host
+
+  match:
+    $hostname, $user over 5m
+
+  outcome:
+    $risk_score = max(
+      if($proc = /(?i)(mshta\.exe|regsvr32\.exe|rundll32\.exe|wmic\.exe|msbuild\.exe)/, 80, 0) +
+      if($proc = /(?i)(python\.exe|python3\.exe|python3|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe)/, 60, 0) +
+      if($proc = /(?i)(curl\.exe|wget\.exe|curl|wget)/, 50, 0)
+    )
+    $ai_services_contacted = array_distinct($ai_host)
+    $initiating_process = array_distinct($proc)
+
+  condition:
+    $network
+}

@@ -1,0 +1,30 @@
+# T1564.012 — File/Path Exclusions
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting Windows Defender exclusion registry modifications.
+# Data Sources: Windows Registry Events via Chronicle UDM
+# Required Sources: REGISTRY_MODIFICATION
+# False Positives: Windows Update agent (wuauclt.exe, WUDFHost.exe) legitimately writes executables and packages to SoftwareDistribution during patch download cycles, Software installers (msiexec.exe) extracting temporary payload files to %TEMP% or %LOCALAPPDATA%\Temp during installation sequences, Security vendors and EDR agents writing their own components to directories they have self-excluded for performance — especially during product updates, Developer CI/CD pipelines and build tools that output compiled binaries to %TEMP% directories configured as AV exclusions to speed up builds, SCCM or Intune distribution agents staging software packages in excluded directories before deployment execution
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564.012
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule av_exclusion_addition {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects AV/EDR exclusion additions (T1564.012)"
+    severity = "HIGH"
+    tactic = "TA0005"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($e.target.registry.registry_key, `(?i)Windows Defender.*(Exclusions|Real-Time Protection)`) nocase or
+      re.regex($e.target.registry.registry_key, `(?i)(DisableRealtimeMonitoring|DisableAntiSpyware)`) nocase
+    )
+
+  condition:
+    $e
+}

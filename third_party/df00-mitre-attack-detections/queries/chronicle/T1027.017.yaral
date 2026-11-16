@@ -1,0 +1,55 @@
+# T1027.017 — SVG Smuggling
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules covering SVG Smuggling (T1027.017).
+# Data Sources: Google Chronicle UDM (PROCESS_LAUNCH and FILE_CREATION event types), Microsoft Defender for Endpoint via Chronicle ingestion pipeline, Windows Sysmon events forwarded via Chronicle Forwarder
+# Required Sources: UDM Events — PROCESS_LAUNCH, UDM Events — FILE_CREATION
+# False Positives: Rule 2 (SVG file write) alone will generate very high false positive volume since any browser downloading an SVG image from a legitimate website (icon libraries, marketing assets, design systems) will trigger it — only treat it as an alert when correlated with Rule 1., Enterprise endpoint management or RMM tools (Datto, NinjaRMM) with browser-based agent consoles that spawn msiexec.exe or certutil.exe for patch deployment will match Rule 1 without SVG involvement., IT support staff using browser-based remote administration tools that invoke PowerShell for system management — the browser process spawning powershell.exe is flagged regardless of SVG context.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.017
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_017_svg_smuggling_browser_spawn {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects SVG Smuggling (T1027.017): browser or mail client spawning a suspicious child process consistent with payload execution from a malicious SVG file"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.017"
+    mitre_attack_technique_name = "SVG Smuggling"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($proc.principal.process.file.full_path,
+      `(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|outlook\.exe|thunderbird\.exe|winmail\.exe)`)
+    re.regex($proc.target.process.file.full_path,
+      `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|msiexec\.exe|bitsadmin\.exe|curl\.exe|wget\.exe)`)
+
+  condition:
+    $proc
+}
+
+rule t1027_017_svg_file_written_by_browser {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects SVG Smuggling (T1027.017): SVG file written to disk by a browser or mail client — use as a lower-confidence precursor signal, correlate with the process spawn rule"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.017"
+    mitre_attack_technique_name = "SVG Smuggling"
+    severity = "MEDIUM"
+    confidence = "LOW"
+    version = "1.0"
+
+  events:
+    $file.metadata.event_type = "FILE_CREATION"
+    re.regex($file.principal.process.file.full_path,
+      `(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|outlook\.exe|thunderbird\.exe|winmail\.exe)`)
+    re.regex($file.target.file.full_path, `(?i)\.svg$`)
+
+  condition:
+    $file
+}

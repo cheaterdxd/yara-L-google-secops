@@ -1,0 +1,29 @@
+# T1614.001 — System Language Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1614.001 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Software installers legitimately checking system locale to present appropriate language packs or regional configuration options during setup, Internationalization (i18n) testing tools and localization verification scripts querying language settings as part of their normal function, IT diagnostics, asset management, and helpdesk scripts enumerating locale for inventory or troubleshooting regional configuration issues, chcp used in legitimate batch automation scripts for console encoding management, such as setting UTF-8 (codepage 65001) for correct output display, Monitoring and observability agents collecting system locale data as part of hardware/software inventory for CMDB or ITSM platforms
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1614.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_system_location_discovery {
+  meta:
+    author = "Argus"
+    description = "Detects system location and language discovery used for geofencing"
+    severity = "MEDIUM"
+    technique = "T1614"
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `ipconfig\.exe|systeminfo\.exe|locale|localectl|timedatectl`) nocase or
+      re.regex($e.target.process.command_line, `Get-WinSystemLocale|Get-Culture|nlsinfo`) nocase
+    )
+    not $e.principal.user.windows_sid = "S-1-5-18"
+  condition:
+    $e
+}

@@ -1,0 +1,32 @@
+# T1563.001 — SSH Hijacking
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting SSH agent hijacking via socket access patterns.
+# Data Sources: Linux Process Events via Chronicle UDM
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Legitimate SSH key management — users listing their own loaded keys with ssh-add -l during normal workflow, particularly on developer workstations and jump boxes, System administrators using gdb or strace for authorized debugging of SSH daemon issues on development or staging servers, Automated configuration management agents (Ansible, Chef, Puppet) that enumerate SSH-related processes or socket paths during host inventory collection, SSH multiplexing via ControlMaster that creates and accesses socket files in /tmp in ways structurally similar to hijacking sockets, Security scanning and endpoint agent tools that read /proc/<pid>/environ or enumerate /tmp to collect environment variables for compliance auditing
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1563.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule ssh_agent_hijacking {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects SSH agent socket hijacking (T1563.001)"
+    severity = "HIGH"
+    tactic = "TA0008"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.command_line, `SSH_AUTH_SOCK`) nocase or
+      (re.regex($e.target.process.file.full_path, `/ssh-add$`) nocase and
+       $e.target.process.command_line = /\s-l/) or
+      re.regex($e.target.process.command_line, `/tmp/ssh-`) nocase
+    )
+
+  condition:
+    $e
+}

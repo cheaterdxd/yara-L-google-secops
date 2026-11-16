@@ -1,0 +1,24 @@
+rule persistence_registry_run_key {
+  meta:
+    author = "Bubenik2022"
+    description = "Process writes a Run/RunOnce registry key from a user-writable path (persistence)"
+    severity = "MEDIUM"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1547.001"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    $e.target.registry.registry_key = /\\CurrentVersion\\Run(Once)?$/ nocase
+    $e.target.registry.registry_value_data = /(\\appdata\\|\\temp\\|\\users\\public\\)/ nocase
+    $e.principal.hostname = $host
+
+  match:
+    $host over 10m
+
+  outcome:
+    $risk_score = 55
+    $value = array_distinct($e.target.registry.registry_value_data)
+
+  condition:
+    $e
+}

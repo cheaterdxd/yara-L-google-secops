@@ -1,0 +1,35 @@
+# T1190 — Exploit Public-Facing Application
+# Tactic: Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule using UDM process launch events to match web server parent processes (IIS, Apache, Nginx, Tomcat, Exchange, scripting runtimes) that spawn post-exploitation tooling.
+# Data Sources: Chronicle UDM via Google Workspace/GCP log ingestion, Chronicle forwarder with Windows Event Log or Sysmon collection, Third-party EDR UDM feeds
+# Required Sources: UDM events (PROCESS_LAUNCH type)
+# False Positives: Managed web hosting environments where IIS application pools execute scheduled tasks (schtasks.exe, at.exe) as part of CMS or e-commerce platform maintenance routines, Java-based middleware platforms that use ProcessBuilder or Runtime.exec() to invoke net.exe or sc.exe for Windows service management as part of startup/shutdown hooks, Security scanners or endpoint agents legitimately invoking whoami.exe or systeminfo.exe from application contexts to collect telemetry or verify runtime identity
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1190
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1190_exploit_public_facing_application {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects web server and application runtime processes spawning suspicious child processes indicative of public-facing application exploitation (T1190)"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1190"
+    mitre_attack_technique_id = "T1190"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platform = "Windows"
+    reference = "https://attack.mitre.org/techniques/T1190/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(w3wp\.exe|httpd\.exe|nginx\.exe|apache2\.exe|java\.exe|python\.exe|python3\.exe|php\.exe|php-cgi\.exe|node\.exe|ruby\.exe|perl\.exe|tomcat[0-9]*\.exe|ews\.exe|umworkerprocess\.exe|msexchangeservicehost\.exe)$/
+    $e.target.process.file.full_path = /(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|curl\.exe|wget\.exe|nc\.exe|ncat\.exe|net\.exe|net1\.exe|whoami\.exe|ipconfig\.exe|systeminfo\.exe|nltest\.exe|ping\.exe|nslookup\.exe|tasklist\.exe|quser\.exe|schtasks\.exe|at\.exe|sc\.exe|reg\.exe)$/
+    $e.principal.hostname = $hostname
+    $e.principal.user.userid = $user
+
+  condition:
+    $e
+}

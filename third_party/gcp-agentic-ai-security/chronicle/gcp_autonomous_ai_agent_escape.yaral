@@ -1,0 +1,26 @@
+rule gcp_autonomous_ai_agent_sandbox_escape {
+  meta:
+    author = "GCP Security Engineering & CSA Post-Mortem Team"
+    description = "Detects rapid parallel metadata server queries and secret exfiltration from AI Agent execution containers"
+    severity = "CRITICAL"
+    tactic = "Credential Access, Privilege Escalation"
+    reference = "https://cloudsecurityalliance.org/artifacts/hugging-face-ciso-post-mortem"
+    mitre_attack = "T1552.005, T1068, T1078"
+
+  events:
+    // Event 1: AI Container accesses GCP Metadata Server for SA Tokens
+    $metadata_token.metadata.product_name = "Google Cloud Compute Engine"
+    $metadata_token.target.resource.attribute.labels.container_name = /vertex|eval|jupyter|ai-agent/
+    $metadata_token.target.url.url_path = "/computeMetadata/v1/instance/service-accounts/default/token"
+
+    // Event 2: Rapid Secret Manager exfiltration within 10 seconds
+    $secret_access.metadata.product_name = "Google Cloud Secret Manager"
+    $secret_access.principal.user = $metadata_token.principal.user
+    $secret_access.security_result.action = "ALLOW"
+
+  match:
+    $metadata_token.principal.user over 10s
+
+  condition:
+    #metadata_token > 15 and #secret_access > 5
+}

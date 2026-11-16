@@ -1,0 +1,36 @@
+# T1027.006 — HTML Smuggling
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting HTML Smuggling (T1027.006) via UDM FILE_CREATION events.
+# Data Sources: Google Chronicle SIEM (UDM), Chronicle Forwarder (Windows endpoints), CrowdStrike Falcon Chronicle Integration, Carbon Black Chronicle Integration, BindPlane ingestion pipeline
+# Required Sources: UDM Events — FILE_CREATION event type
+# False Positives: Browser extensions leveraging the downloads API to write JS configuration or runtime files into AppData extension cache directories during installation or self-update, Internal enterprise web applications that authenticate users and serve EXE or ZIP software packages via browser download as part of onboarding or provisioning workflows, Authorized red team or penetration testing engagements simulating HTML smuggling payloads against endpoints enrolled in Chronicle monitoring
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule html_smuggling_browser_drops_suspicious_file {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects HTML Smuggling T1027.006: browser process creating ISO/IMG disk images or script/executable payloads in user-writable directories"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.006"
+    mitre_attack_subtechnique = "HTML Smuggling"
+    reference = "https://attack.mitre.org/techniques/T1027/006/"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    $e.principal.process.file.full_path =
+      /(?i)(\\|\/)((msedge|chrome|firefox|iexplore|brave|opera)\.exe)$/
+    $e.target.file.full_path =
+      /(?i)\\(Downloads|Temp|AppData)\\/
+    $e.target.file.full_path =
+      /(?i)\.(iso|img|hta|js|vbs|lnk|bat|exe|zip)$/
+
+  condition:
+    $e
+}

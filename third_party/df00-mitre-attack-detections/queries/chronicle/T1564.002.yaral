@@ -1,0 +1,53 @@
+# T1564.002 — Hidden Users
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1564.002 Hidden Users activity including SpecialAccounts\UserList registry modifications that hide user accounts from the Windows login screen, new account creation events, administrative group membership changes, and net.exe user add commands.
+# Data Sources: Google Chronicle SIEM with Windows Event Forwarding (WEF), Sysmon logs ingested via Chronicle forwarder, Windows Security Events via Chronicle Windows Sensor
+# Required Sources: UDM Events (registry_modification, user_creation, group_modification, process_launch)
+# False Positives: Enterprise desktop management platforms (e.g., Tanium, BigFix) that programmatically create local accounts for agent operation and suppress them from the login UI, Kiosk mode configuration tools that deliberately hide administrator or service accounts from the Windows logon screen using the SpecialAccounts registry key as an intended feature, Privileged Access Workstation (PAW) hardening scripts that create local emergency access accounts and configure them as hidden per organizational security policy
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule hidden_user_account_creation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1564.002 Hidden Users via registry manipulation of SpecialAccounts\\UserList or suspicious local user account creation"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1564.002"
+    reference = "https://attack.mitre.org/techniques/T1564/002/"
+
+  events:
+    (
+      // Registry-based user hiding (Sysmon Event 12/13)
+      $e.metadata.event_type = "REGISTRY_MODIFICATION"
+      and re.regex($e.target.registry.registry_key, `(?i)Winlogon\\SpecialAccounts\\UserList`)
+    )
+    or
+    (
+      // Windows Security: new user account created (Event 4720)
+      $e.metadata.event_type = "USER_CREATION"
+      and $e.metadata.product_name = "Microsoft-Windows-Security-Auditing"
+    )
+    or
+    (
+      // Windows Security: user added to Administrators group (Event 4732)
+      $e.metadata.event_type = "GROUP_MODIFICATION"
+      and $e.target.group.group_display_name = /(?i)administrators/
+      and $e.metadata.product_name = "Microsoft-Windows-Security-Auditing"
+    )
+    or
+    (
+      // net.exe user add command
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i)(net|net1)\.exe$`)
+      and re.regex($e.target.process.command_line, `(?i)user.+/add`)
+    )
+
+  condition:
+    $e
+}

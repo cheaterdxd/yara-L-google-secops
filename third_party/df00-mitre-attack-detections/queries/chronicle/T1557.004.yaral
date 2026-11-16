@@ -1,0 +1,50 @@
+# T1557.004 — Evil Twin
+# Tactic: Credential Access, Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting Evil Twin AP attacks by correlating two NETWORK_CONNECTION UDM events that share the same SSID value but carry different BSSIDs, originating from different endpoints within a 24-hour sliding window.
+# Data Sources: Google Chronicle UDM NETWORK_CONNECTION events, Windows WLAN AutoConfig Operational log normalized via Chronicle Windows parser or Bindplane OP agent, Endpoint telemetry with UDM network.ssid and network.bssid field population confirmed
+# Required Sources: UDM events — NETWORK_CONNECTION type with network.ssid and network.bssid populated by parser
+# False Positives: Enterprise wireless infrastructure with many APs sharing a corporate SSID — different hosts on different floors connecting to their nearest AP each get a unique BSSID, satisfying both the SSID match and BSSID mismatch conditions; create a Chronicle reference list of authorized BSSIDs per SSID and add a NOT $e1.network.bssid in %authorized_bssids condition, Wireless networks using 802.11r fast BSS transition or 802.11k neighbor reports that actively steer clients between BSSIDs, causing UDM NETWORK_CONNECTION events on different hosts to show valid SSID-consistent but BSSID-variable connection patterns that are completely legitimate, Organizational mergers or acquisitions where two companies temporarily operate overlapping SSIDs (e.g., both have a 'corp' or 'guest' network) at shared office locations, creating a period where the same SSID resolves to BSSIDs from two entirely separate wireless infrastructure owners
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1557.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule evil_twin_ssid_multi_bssid {
+  meta:
+    author = "df00tech"
+    description = "Detects Evil Twin AP attack: same corporate SSID advertised by multiple distinct BSSIDs from different hosts within 24h, indicating a rogue AP cloning a legitimate network"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1557.004"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1557/004/"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "Legitimate enterprise APs sharing SSID for roaming; tune BSSID threshold to your AP infrastructure baseline"
+    version = "1.0"
+
+  events:
+    $e1.metadata.event_type = "NETWORK_CONNECTION"
+    $e1.metadata.vendor_name = "Microsoft"
+    $e1.network.ssid != ""
+    $e1.network.bssid != ""
+    $e1.network.bssid != "00:00:00:00:00:00"
+    re.regex($e1.network.ssid, `(?i)(corp|office|employee|secure|work|hq|internal|guest|wireless)`)
+    $ssid = $e1.network.ssid
+    $bssid1 = $e1.network.bssid
+    $host1 = $e1.principal.hostname
+
+    $e2.metadata.event_type = "NETWORK_CONNECTION"
+    $e2.metadata.vendor_name = "Microsoft"
+    $e2.network.ssid = $ssid
+    $e2.network.bssid != ""
+    $e2.network.bssid != "00:00:00:00:00:00"
+    $e2.network.bssid != $bssid1
+    $e2.principal.hostname != $host1
+
+  match:
+    $ssid over 24h
+
+  condition:
+    $e1 and $e2
+}

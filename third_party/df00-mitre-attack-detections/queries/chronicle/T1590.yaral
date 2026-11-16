@@ -1,0 +1,69 @@
+# T1590 — Gather Victim Network Information
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting network reconnaissance activity consistent with T1590 — Gather Victim Network Information.
+# Data Sources: Chronicle UDM process launch events from Windows endpoints (via Sysmon or EDR forwarders), Chronicle Windows Event Log parser (EventID 4688), Chronicle Sysmon parser (EventID 1), Chronicle Linux audit process events
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH, target.process.* UDM fields, principal.process.* UDM fields
+# False Positives: Authorized penetration testing or red team operations — add exclusion for known scanner host principal.hostname values or scanner service account principal.user.userid, Lansweeper, Nessus, or similar network management platforms running on dedicated scanner hosts under service accounts with predictable command-line patterns, System administrators using nltest for legitimate DC discovery, domain trust enumeration during AD migrations, or routine directory health checks, DNS operations teams running dig with AXFR against internal authoritative name servers as part of zone health monitoring or replication validation, Security tooling in managed SOC environments that invokes nmap or masscan as part of automated asset discovery pipelines on scheduled intervals
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1590
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1590_gather_victim_network_information {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects adversary network reconnaissance activity targeting victim network information consistent with MITRE ATT&CK T1590. Identifies execution of known port/host scanning tools, DNS zone transfer enumeration, internal network discovery utilities, and domain trust enumeration via nltest. Observed in Volt Typhoon, HAFNIUM, and Indrik Spider intrusion sets."
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1590"
+    mitre_attack_technique_name = "Gather Victim Network Information"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    rule_version = "1.0"
+    created = "2026-04-14"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path,
+        `(?i)(nmap\.exe|masscan\.exe|zmap\.exe|fping\.exe|nbtscan\.exe|unicornscan|dnsenum\.py|dnsrecon\.py|fierce\.py|sublist3r|amass\.exe|theharvester|lansweeper\.exe|netdiscover|angryip|advanced_port_scanner\.exe)`) or
+      re.regex($e.target.process.command_line,
+        `(?i)(nmap|masscan|zmap|fping|nbtscan|unicornscan|dnsenum|dnsrecon|fierce|sublist3r|amass|theharvester|lansweeper|netdiscover|angryip|advanced.port.scanner|axfr|zone-transfer|zone\s+transfer|\-t\s+any)`) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)nltest\.exe`) and
+        re.regex($e.target.process.command_line, `(?i)(\/dclist|\/domain_trusts|\/trusted_domains|\/dsgetdc)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(nslookup\.exe|dig\.exe|host\.exe)`) and
+        re.regex($e.target.process.command_line, `(?i)(axfr|AXFR|zone-transfer|\-t\s+any)`)
+      )
+    )
+
+  match:
+    $e.principal.hostname over 1h
+
+  outcome:
+    $risk_score = max(
+      if(
+        re.regex($e.target.process.command_line, `(?i)(nmap|masscan|zmap|fping|nbtscan|unicornscan)`), 90,
+        if(
+          re.regex($e.target.process.command_line, `(?i)(dnsrecon|dnsenum|fierce|axfr|zone.transfer)`), 85,
+          if(
+            re.regex($e.target.process.command_line, `(?i)(lansweeper|advanced.port.scanner|angryip|netdiscover)`), 80,
+            if(
+              re.regex($e.target.process.command_line, `(?i)(\/dclist|\/domain_trusts|\/trusted_domains|\/dsgetdc)`), 70, 75
+            )
+          )
+        )
+      )
+    )
+    $hostname = $e.principal.hostname
+    $process_name = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+    $username = $e.principal.user.userid
+
+  condition:
+    $e
+}

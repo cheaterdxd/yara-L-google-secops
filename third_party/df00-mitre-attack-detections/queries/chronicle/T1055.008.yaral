@@ -1,0 +1,40 @@
+# T1055.008 — Ptrace System Calls
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting ptrace-based process injection on Linux by matching PROCESS_OPEN UDM events where a non-debugger principal process opens or attaches to a distinct target process.
+# Data Sources: Chronicle SIEM with Linux auditd log ingestion via Chronicle Forwarder, Chronicle UDM log type LINUX_SYSLOG or LINUX_AUDITD with auditd SYSCALL record parsing, Chronicle with Google Cloud ops agent forwarding Linux audit events
+# Required Sources: UDM Events (event_type = PROCESS_OPEN from Linux endpoints)
+# False Positives: Legitimate profiling tools (e.g., py-spy, rbspy, async-profiler) that attach to running processes for performance analysis and are installed under unexpected paths, Service mesh sidecar or observability agents (e.g., eBPF-based tools with ptrace fallback) performing process enumeration or metric collection, Kubernetes ephemeral debug containers or kubectl debug sessions that invoke ptrace-based attach operations against pods on the same node
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule linux_ptrace_injection_t1055_008 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects ptrace syscalls with write or attach capability on Linux endpoints indicating process injection - T1055.008"
+    mitre_attack_technique = "T1055.008"
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1055/008/"
+
+  events:
+    // Chronicle normalizes Linux auditd PTRACE_ATTACH and PTRACE_SEIZE events
+    // to PROCESS_OPEN in UDM when the Linux forwarder parses auditd SYSCALL records
+    $e.metadata.event_type = "PROCESS_OPEN"
+    $e.principal.process.pid > 0
+    $e.target.process.pid > 0
+    $e.principal.process.pid != $e.target.process.pid
+    $e.principal.asset.platform_software.platform = "LINUX"
+    $e.principal.process.file.full_path != ""
+    not re.regex(
+      $e.principal.process.file.full_path,
+      `/(gdb|strace|ltrace|valgrind|perf|dockerd|containerd|runc|lldb|py-spy|rbspy)$`
+    )
+
+  condition:
+    $e
+}

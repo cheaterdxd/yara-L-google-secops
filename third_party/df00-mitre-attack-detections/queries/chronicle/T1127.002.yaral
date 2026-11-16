@@ -1,0 +1,71 @@
+# T1127.002 — ClickOnce
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting ClickOnce (T1127.002) proxy execution and persistence via four behavioral branches: DFSVC.EXE spawning LOLBin child processes, rundll32.exe loading dfshim.dll via ShOpenVerbApplication, DFSVC.EXE initiating outbound connections to non-RFC1918 addresses, and .appref-ms/.application files created in startup folders or temp/download paths.
+# Data Sources: Google Chronicle, Windows Sysmon via Chronicle Forwarder, Microsoft Defender for Endpoint via Chronicle
+# Required Sources: PROCESS_LAUNCH, NETWORK_CONNECTION, FILE_CREATION
+# False Positives: Enterprise-managed ClickOnce application deployments where DFSVC.EXE legitimately spawns PowerShell for custom post-install hooks defined by the application vendor, Software packaging or repackaging tools that invoke rundll32.exe with dfshim.dll to convert or validate ClickOnce manifests in a development or QA environment, SaaS applications distributed as ClickOnce packages that create .appref-ms files in the Downloads folder as part of a first-run user experience flow
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1127.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule clickonce_dfsvc_abuse_t1127002 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects ClickOnce (T1127.002) abuse: DFSVC.EXE spawning LOLBin children, rundll32 loading dfshim.dll, DFSVC.EXE outbound network, and .appref-ms persistence"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1127.002"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    (
+      /* Branch 1: DFSVC.EXE spawning suspicious child processes */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.principal.process.file.full_path, `(?i)dfsvc\.exe$`)
+        and re.regex($e.target.process.file.full_path,
+          `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|mshta\.exe|wscript\.exe|cscript\.exe|regsvr32\.exe|rundll32\.exe|certutil\.exe|bitsadmin\.exe|msbuild\.exe|csc\.exe|installutil\.exe)$`)
+      )
+      or
+      /* Branch 2: rundll32.exe invoking dfshim.dll ShOpenVerbApplication */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i)rundll32\.exe$`)
+        and (
+          re.regex($e.target.process.command_line, `(?i)dfshim`) or
+          re.regex($e.target.process.command_line, `(?i)ShOpenVerbApplication`)
+        )
+      )
+      or
+      /* Branch 3: DFSVC.EXE making outbound network connections to public IPs */
+      (
+        $e.metadata.event_type = "NETWORK_CONNECTION"
+        and re.regex($e.principal.process.file.full_path, `(?i)dfsvc\.exe$`)
+        and not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8")
+        and not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12")
+        and not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16")
+        and not net.ip_in_range_cidr($e.target.ip, "127.0.0.0/8")
+      )
+      or
+      /* Branch 4: .appref-ms or .application files written to startup/temp */
+      (
+        $e.metadata.event_type = "FILE_CREATION"
+        and (
+          re.regex($e.target.file.full_path, `(?i)\.appref-ms$`) or
+          re.regex($e.target.file.full_path, `(?i)\.application$`)
+        )
+        and (
+          re.regex($e.target.file.full_path, `(?i)startup`) or
+          re.regex($e.target.file.full_path, `(?i)\\temp\\`) or
+          re.regex($e.target.file.full_path, `(?i)\\tmp\\`) or
+          re.regex($e.target.file.full_path, `(?i)\\downloads\\'`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

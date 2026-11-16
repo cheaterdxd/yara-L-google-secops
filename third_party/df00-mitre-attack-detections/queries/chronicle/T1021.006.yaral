@@ -1,0 +1,48 @@
+# T1021.006 — Windows Remote Management
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting WinRM lateral movement using UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle SIEM — Windows Endpoint telemetry via Chronicle Forwarder, Microsoft Defender for Endpoint ingested into Chronicle via Chronicle MDE connector, Sysmon events normalised to UDM via Chronicle Windows parser
+# Required Sources: UDM entity store — PROCESS_LAUNCH event type
+# False Positives: Legitimate PowerShell Remoting sessions from administrator accounts on jump hosts or Privileged Access Workstations (PAWs) — tune with a reference list of authorised management hosts in the principal.hostname field, Configuration management platforms (SaltStack winrm transport, Ansible, Chef) executing scripts remotely via WinRM as part of infrastructure automation — these generate high-frequency but predictable source-destination patterns, Security tooling such as vulnerability scanners or EDR management consoles that use WinRM to enumerate system configuration on managed Windows endpoints during scheduled assessment windows
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1021.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule winrm_lateral_movement_t1021_006 {
+  meta:
+    author          = "Detection Engineering"
+    description     = "Detects WinRM lateral movement (T1021.006): wsmprovhost.exe spawning non-standard children, PowerShell WinRM remoting cmdlets, and direct winrs.exe usage"
+    mitre_attack_tactic           = "Lateral Movement"
+    mitre_attack_technique        = "T1021.006"
+    mitre_attack_technique_name   = "Remote Services: Windows Remote Management"
+    severity   = "HIGH"
+    confidence = "HIGH"
+    created    = "2024-01-01"
+    platforms  = "Windows"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        // Pattern 1: wsmprovhost.exe spawning suspicious children — destination-side remote execution
+        re.regex($e.principal.process.file.full_path, `(?i)wsmprovhost\.exe$`)
+        and not re.regex($e.target.process.file.full_path, `(?i)(conhost|WerFault|csc)\.exe$`)
+      )
+      or
+      (
+        // Pattern 2: PowerShell using WinRM remoting cmdlets
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`)
+        and re.regex($e.target.process.command_line,
+          `(?i)(Invoke-Command|Enter-PSSession|New-PSSession|-ComputerName|wsman://|WSMan)`)
+      )
+      or
+      // Pattern 3: Direct WinRS lateral movement tool
+      re.regex($e.target.process.file.full_path, `(?i)winrs\.exe$`)
+    )
+
+  condition:
+    $e
+}

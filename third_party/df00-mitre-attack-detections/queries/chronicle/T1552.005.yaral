@@ -1,0 +1,58 @@
+# T1552.005 — Cloud Instance Metadata API
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Cloud Instance Metadata API access via both network connections to well-known IMDS IP addresses (169.254.169.254) and process launches containing metadata API path patterns.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Chronicle Ingestion API — Linux/Windows EDR telemetry, Chronicle Google Cloud ingestion (GCP audit logs), Chronicle AWS S3 log ingestion (CloudTrail, VPC Flow Logs)
+# Required Sources: UDM Events (NETWORK_CONNECTION), UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate workload identity federation flows where applications running on GCP Compute Engine or AWS EC2 acquire short-lived credentials through IMDS as part of normal SDK authentication, Cloud-native monitoring agents (Datadog, New Relic, Dynatrace, CloudWatch Agent) installed on instances that query IMDS to enrich telemetry with instance ID, region, and account metadata, CI/CD pipeline runners (GitLab Runner, GitHub Actions self-hosted, Jenkins agents) deployed on cloud VMs that use IMDS credentials to authenticate with cloud APIs during build and deployment jobs
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1552.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule cloud_instance_metadata_api_access {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects access to Cloud Instance Metadata API (IMDS) via network connections or process command lines. Covers AWS (169.254.169.254, fd00:ec2::254), Azure (imds.azure.com), and GCP (metadata.google.internal). Maps to MITRE ATT&CK T1552.005."
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1552.005"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      // Pattern 1: Network connection to metadata IP
+      (
+        $e.metadata.event_type = "NETWORK_CONNECTION"
+        and (
+          $e.target.ip = "169.254.169.254"
+          or $e.target.hostname = "metadata.google.internal"
+          or $e.target.hostname = "imds.azure.com"
+        )
+        and not re.regex($e.principal.process.file.full_path,
+          `(?i)(AzureGuestAgent|WindowsAzureGuestAgent|WaAppAgent|amazon-ssm-agent|google_guest_agent|cloud-init|waagent|aws-cfn-bootstrap)`)
+      )
+      or
+      // Pattern 2: Process execution with metadata API strings
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and (
+          re.regex($e.target.process.command_line, `169\.254\.169\.254`) or
+          re.regex($e.target.process.command_line, `(?i)metadata/instance`) or
+          re.regex($e.target.process.command_line, `(?i)iam/security-credentials`) or
+          re.regex($e.target.process.command_line, `(?i)latest/meta-data`) or
+          re.regex($e.target.process.command_line, `(?i)latest/dynamic`) or
+          re.regex($e.target.process.command_line, `(?i)instance-identity`) or
+          re.regex($e.target.process.command_line, `(?i)computeMetadata`) or
+          re.regex($e.target.process.command_line, `(?i)metadata\.google\.internal`) or
+          re.regex($e.target.process.command_line, `(?i)imds\.azure\.com`)
+        )
+        and not re.regex($e.target.process.command_line,
+          `(?i)(aws-cfn-bootstrap|cloud-init|amazon-ssm|google_guest_agent|waagent|AzureGuestAgent)`)
+      )
+    )
+
+  condition:
+    $e
+}

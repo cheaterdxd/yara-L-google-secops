@@ -1,0 +1,45 @@
+# T1546.011 — Application Shimming
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Application Shimming persistence (T1546.011) by monitoring for sdbinst.exe process launches, AppCompatFlags registry key modifications (Custom/InstalledSDB), and .sdb shim database file creation outside the legitimate Windows AppPatch directory using UDM event fields.
+# Data Sources: Google Chronicle SIEM, Windows Event Forwarding to Chronicle, Chronicle Unified Data Model (UDM)
+# Required Sources: UDM Events (PROCESS_LAUNCH, REGISTRY_MODIFICATION, FILE_CREATION)
+# False Positives: Software vendors distributing applications with embedded compatibility shims will trigger both the sdbinst.exe process event and AppCompatFlags registry modification conditions as part of their standard installer execution., IT administrators using the Microsoft Application Compatibility Toolkit to apply organization-wide compatibility fixes will generate sustained streams of these events during controlled deployment windows., Endpoint Detection and Response products that leverage Windows shim infrastructure as part of their behavioral monitoring may write non-malicious .sdb files and registry entries matching this rule's conditions.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.011
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule application_shimming_t1546_011 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Application Shimming (T1546.011) via sdbinst.exe execution, AppCompatFlags registry modification, or .sdb file creation outside Windows AppPatch"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1546.011"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-20"
+
+  events:
+    (
+      // sdbinst.exe process execution
+      ($e.metadata.event_type = "PROCESS_LAUNCH" and
+       re.regex($e.target.process.file.full_path, `(?i)sdbinst\.exe$`))
+      or
+      // AppCompatFlags registry modification
+      ($e.metadata.event_type = "REGISTRY_MODIFICATION" and
+       (
+         re.regex($e.target.registry.registry_key, `(?i)AppCompatFlags\\(Custom|InstalledSDB)`) or
+         re.regex($e.target.registry.registry_key, `(?i)AppCompatFlags.*(Custom|InstalledSDB)`)
+       ))
+      or
+      // .sdb file created outside Windows AppPatch
+      ($e.metadata.event_type = "FILE_CREATION" and
+       re.regex($e.target.file.full_path, `(?i)\.sdb$`) and
+       not re.regex($e.target.file.full_path, `(?i)Windows\\AppPatch`))
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,57 @@
+# T1584.008 — Network Devices
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that correlates UDM network connection, HTTP, flow, and authentication events against Chronicle's IOC entity graph to identify traffic sourced from IPs attributed to compromised SOHO routers, ORB relay networks, or state-sponsored threat actor staging infrastructure.
+# Data Sources: Chronicle UDM normalized event stream, Chronicle Threat Intelligence Graph (IOC entity graph, populated from Google TI feeds and custom imports), Google Cloud Threat Intelligence (VirusTotal Enterprise, Mandiant, Google TAG feeds), Custom IOC imports via Chronicle STIX/TAXII or API ingestion, Network perimeter logs ingested via Chronicle forwarder (firewall, proxy, VPN), Identity provider and authentication logs ingested via Chronicle forwarder
+# Required Sources: udm_events (Chronicle UDM normalized event stream), graph (Chronicle IOC/entity graph with threat intelligence enrichment)
+# False Positives: Google Threat Intelligence feed entries that apply broad /24 or /16 CIDR attribution for threat actor infrastructure, capturing legitimate co-tenanted or subsequently reassigned IPs within the same subnet as historically compromised SOHO devices, Commercially operated VPN or residential proxy services whose exit node IPs have appeared in SOHO/ORB threat intelligence because adversaries used the same commercial proxy infrastructure during observed campaigns, Internet scanning and research infrastructure operated by security vendors (Shodan, Censys, GreyNoise) operating from IP ranges adjacent to or previously overlapping with known compromised SOHO device address space, Business-to-business partner traffic originating from ISPs in regions with high SOHO compromise rates where broad TI feed attribution sweeps include legitimate subscriber IP allocations
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1584.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1584_008_compromised_network_device_ti_match {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects inbound connections and authentication events from IPs attributed to compromised SOHO/ORB network device infrastructure via Chronicle threat intelligence graph correlation. Covers VoltTyphoon, APT28, APT31, Leviathan, and generic ORB relay/SOHO botnet indicators."
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1584.008"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    priority = "HIGH"
+    false_positives = "Stale TI feed entries for reclaimed IPs, VPN exit nodes, recycled ISP address pools"
+    version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "NETWORK_CONNECTION" or
+      $e.metadata.event_type = "NETWORK_HTTP" or
+      $e.metadata.event_type = "NETWORK_FLOW" or
+      $e.metadata.event_type = "USER_LOGIN" or
+      $e.metadata.event_type = "USER_LOGIN_FAIL"
+    )
+
+    $e.principal.ip = $src_ip
+
+    not net.ip_in_range_cidr($src_ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($src_ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($src_ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($src_ip, "127.0.0.0/8")
+    not net.ip_in_range_cidr($src_ip, "169.254.0.0/16")
+
+    $ioc.graph.entity.artifact.ip = $src_ip
+    $ioc.graph.metadata.entity_type = "IP_ADDRESS"
+    (
+      re.regex($ioc.graph.metadata.threat_feed_name,
+        `(?i)(SOHO|ORB|VoltTyphoon|APT28|APT31|Leviathan|RouterBotnet|EdgeDevice|CompromisedRouter)`) or
+      re.regex($ioc.graph.metadata.description,
+        `(?i)(SOHO|compromised router|ORB network|operational relay|network device|relay box)`)
+    )
+
+  match:
+    $src_ip over 1h
+
+  condition:
+    $e and $ioc
+}

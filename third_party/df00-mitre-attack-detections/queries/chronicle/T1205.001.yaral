@@ -1,0 +1,113 @@
+# T1205.001 — Port Knocking
+# Tactic: Defense Evasion, Persistence, Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules detecting T1205.001 port knocking: (1) knockd/fwknopd daemon process launch events on Linux hosts indicating knock daemon presence, (2) knock client tool execution (knock, fwknop, hping3 with SYN flags, knockd.conf command lines) on any endpoint, and (3) network-level detection of rapid sequential denied inbound connections to 3+ distinct ports from the same source IP within a 30-second window using UDM NETWORK_CONNECTION events with BLOCK action.
+# Data Sources: Chronicle UDM (Unified Data Model) — endpoint telemetry, Chronicle ingested firewall/network logs (Palo Alto, Cisco, Fortinet parsers), Linux process telemetry via Chronicle forwarder or GCP Chronicle agent, Windows Sysmon events ingested via Chronicle Windows forwarder
+# Required Sources: UDM events (PROCESS_LAUNCH), UDM events (NETWORK_CONNECTION)
+# False Positives: Legitimate knockd deployments on bastion hosts or jump servers where administrators use port knocking as a VPN replacement — daemon process launches and syslog messages are expected and benign in this context, Red team operators performing authorized port knocking tests against client environments during scheduled penetration testing windows — coordinate with SOC to suppress alerts during known engagement periods, Network monitoring tools that generate synthetic probes to 3+ filtered ports as part of availability or reachability checks, triggering the network sequence rule without malicious intent
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1205.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1205_001_port_knocking_daemon_activity {
+  meta:
+    author = "df00tech"
+    description = "Detects T1205.001 port knocking via knockd/fwknopd daemon syslog messages indicating knock sequence receipt or completion"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1205.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1205/001/"
+    created = "2026-04-19"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $e.principal.process.file.full_path = /knockd/ nocase or
+      $e.principal.process.file.full_path = /fwknopd/ nocase or
+      $e.target.process.file.full_path = /knockd/ nocase or
+      $e.target.process.file.full_path = /fwknopd/ nocase
+    )
+    $host = $e.principal.hostname
+
+  condition:
+    $e
+}
+
+rule t1205_001_port_knocking_client_execution {
+  meta:
+    author = "df00tech"
+    description = "Detects T1205.001 port knocking via execution of known knock client tools including knock, fwknop, and hping3 with SYN flags"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1205.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1205/001/"
+    created = "2026-04-19"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $e.target.process.file.full_path = /\\knock\.exe$/ nocase or
+      $e.target.process.file.full_path = /\/knock$/ nocase or
+      $e.target.process.file.full_path = /\\fwknop\.exe$/ nocase or
+      $e.target.process.file.full_path = /\/fwknop$/ nocase or
+      (
+        $e.target.process.file.full_path = /hping3/ nocase and
+        (
+          re.regex($e.target.process.command_line, `--syn`) or
+          re.regex($e.target.process.command_line, `\s-S\s`)
+        )
+      ) or
+      re.regex($e.target.process.command_line, `knockd\.conf`) or
+      re.regex($e.target.process.command_line, `--knock-port`)
+    )
+    $host = $e.principal.hostname
+    $cmdline = $e.target.process.command_line
+
+  condition:
+    $e
+}
+
+rule t1205_001_port_knocking_network_sequence {
+  meta:
+    author = "df00tech"
+    description = "Detects T1205.001 port knocking via rapid sequential denied network connections to 3+ distinct ports from same source within 30 seconds"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1205.001"
+    severity = "HIGH"
+    confidence = "LOW"
+    reference = "https://attack.mitre.org/techniques/T1205/001/"
+    created = "2026-04-19"
+
+  events:
+    $e1.metadata.event_type = "NETWORK_CONNECTION"
+    $e1.network.direction = "INBOUND"
+    $e1.security_result.action = "BLOCK"
+    $e1.principal.ip = $src_ip
+    $e1.target.port = $port1
+
+    $e2.metadata.event_type = "NETWORK_CONNECTION"
+    $e2.network.direction = "INBOUND"
+    $e2.security_result.action = "BLOCK"
+    $e2.principal.ip = $src_ip
+    $e2.target.port = $port2
+
+    $e3.metadata.event_type = "NETWORK_CONNECTION"
+    $e3.network.direction = "INBOUND"
+    $e3.security_result.action = "BLOCK"
+    $e3.principal.ip = $src_ip
+    $e3.target.port = $port3
+
+    $port1 != $port2
+    $port2 != $port3
+    $port1 != $port3
+
+  match:
+    $src_ip over 30s
+
+  condition:
+    $e1 and $e2 and $e3
+}

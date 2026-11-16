@@ -1,0 +1,66 @@
+# T1074 — Data Staged
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1074 data staging by identifying archive file creation in common staging directories and bulk copy command execution targeting staging paths.
+# Data Sources: Google Chronicle SIEM with Windows Sysmon UDM ingestion, Chronicle Unified Data Model (UDM) with endpoint telemetry, Chronicle Google Workspace activity (for cloud staging variant)
+# Required Sources: UDM events (FILE_CREATION, PROCESS_LAUNCH)
+# False Positives: Enterprise software packaging workflows where administrators use robocopy or xcopy to distribute application packages to staging directories on endpoints before installation, Endpoint security or DLP agents that create archive snapshots of monitored directories in Temp or AppData for forensic preservation or policy enforcement, Cloud sync clients (OneDrive, Google Drive, Dropbox) staging large file sets in AppData\Roaming or AppData\Local\Temp before uploading to cloud storage
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1074
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1074_data_staged_detection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1074 data staging: bulk file creation or archive creation in common staging paths, and bulk copy commands targeting staging locations"
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1074"
+    mitre_attack_sub_technique = ""
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    version = "1.0"
+
+  events:
+    (
+      // Branch 1: Archive file creation in staging directories
+      $e1.metadata.event_type = "FILE_CREATION"
+      $e1.principal.hostname = $hostname
+      $e1.principal.user.userid = $userid
+      (
+        re.regex($e1.target.file.full_path, `(?i)\\(Temp|tmp|AppData\\Local\\Temp|AppData\\Roaming|ProgramData|Users\\Public|Windows\\Temp)\\`)
+      )
+      (
+        re.regex($e1.target.file.full_path, `(?i)\.(zip|7z|rar|tar|gz|cab|iso)$`)
+      )
+    )
+    OR
+    (
+      // Branch 2: Bulk copy process targeting staging paths
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      $e1.principal.hostname = $hostname
+      $e1.principal.user.userid = $userid
+      (
+        re.regex($e1.target.process.command_line, `(?i)(robocopy|xcopy|copy\s+/|Copy-Item|cp\s+-r)`)
+      )
+      (
+        re.regex($e1.target.process.command_line, `(?i)\\(Temp|tmp|Public|ProgramData)\\`)
+      )
+    )
+
+  match:
+    $hostname, $userid over 10m
+
+  outcome:
+    $risk_score = max(
+      if($e1.metadata.event_type = "FILE_CREATION", 50, 70)
+    )
+    $staging_path = array_distinct($e1.target.file.full_path)
+    $process_name = array_distinct($e1.target.process.file.full_path)
+    $command_line = array_distinct($e1.target.process.command_line)
+    $event_count = count_distinct($e1.metadata.id)
+
+  condition:
+    $e1
+}

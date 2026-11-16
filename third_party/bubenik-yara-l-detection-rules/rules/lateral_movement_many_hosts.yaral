@@ -1,0 +1,25 @@
+rule lateral_movement_many_hosts_single_user {
+  meta:
+    author = "Bubenik2022"
+    description = "One user authenticates to many distinct hosts in a short window (possible lateral movement)"
+    severity = "HIGH"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1021"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.security_result.action = "ALLOW"
+    $e.extensions.auth.type = "NETWORK"
+    $e.target.user.userid = $user
+    $e.target.hostname = $target_host
+
+  match:
+    $user over 10m
+
+  outcome:
+    $distinct_hosts = count_distinct($target_host)
+    $risk_score = 70
+
+  condition:
+    $e and $distinct_hosts >= 5
+}

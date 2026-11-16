@@ -1,0 +1,53 @@
+# T1007 — System Service Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1007 System Service Discovery across enterprise endpoints using UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle SIEM, Chronicle Forwarder (Windows endpoints), Microsoft Defender for Endpoint via Chronicle integration, CrowdStrike Falcon via Chronicle integration
+# Required Sources: UDM Events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: Enterprise software packaging and deployment systems that verify service prerequisites or conflicts before installing or upgrading business applications across the fleet, IT support staff and system administrators using built-in Windows tools such as sc.exe or PowerShell Get-Service to remotely diagnose service-related issues on user workstations, Vulnerability scanners and compliance auditing tools (Tenable, Qualys, CIS-CAT Pro) that enumerate running and installed services as part of configuration baseline and patch-state assessments
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1007_system_service_discovery {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1007 System Service Discovery via sc.exe query, tasklist /svc, net/net1 start, wmic win32_service, and PowerShell Get-Service enumeration"
+    mitre_attack_technique = "T1007"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1007/"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2025-01-01"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\sc\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(query|\bq\b|\bqc\b)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\tasklist\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)/svc`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\net1?\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)\bstart\b`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(win32_service|service\s+get|service\s+list)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(get-service|win32_service)`)
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,66 @@
+# T1001.001 — Junk Data
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for T1001.001.
+# Data Sources: Google Chronicle UDM, Chronicle Endpoint Telemetry, Windows event forwarding to Chronicle
+# Required Sources: UDM NETWORK_CONNECTION events, UDM NETWORK_DNS events
+# False Positives: CI/CD pipeline agents making repeated webhook calls to build infrastructure during deployments, Endpoint management software (SCCM, Tanium) making frequent check-in connections from system processes, Applications using base64-encoded subdomain routing for multi-tenant SaaS platforms, DNS-based service discovery in Kubernetes or microservice environments with long service names
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1001.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1001_001_junk_data_c2_beaconing {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects T1001.001 Junk Data C2 obfuscation via beaconing from suspicious processes and DNS junk label queries"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1001.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-13"
+
+  events:
+    // Beaconing approach: repeated outbound connections from LOLBin processes
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.principal.process.file.full_path = /(?i)(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32|svchost|dllhost)\.exe$/
+    $e.target.ip != "10.0.0.0/8"
+    $e.target.ip != "172.16.0.0/12"
+    $e.target.ip != "192.168.0.0/16"
+    $e.target.ip != "127.0.0.0/8"
+    $e.target.port in (80, 443, 8080, 8443, 4444, 4445, 1080, 3128)
+    $e.principal.hostname = $hostname
+    $e.principal.process.file.full_path = $proc_path
+
+  match:
+    $hostname, $proc_path over 1h
+
+  condition:
+    #e >= 5
+}
+
+rule t1001_001_junk_data_dns_label {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects T1001.001 junk data in DNS C2 via anomalously long subdomain labels from suspicious processes"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1001.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-13"
+
+  events:
+    $dns.metadata.event_type = "NETWORK_DNS"
+    $dns.principal.process.file.full_path = /(?i)(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32|svchost|dllhost)\.exe$/
+    // DNS question name with long first label (>20 chars before first dot)
+    re.capture($dns.network.dns.questions.name, "^([^.]{21,})") != ""
+    $dns.principal.hostname = $host
+    $dns.principal.process.file.full_path = $dproc
+
+  match:
+    $host, $dproc over 30m
+
+  condition:
+    #dns >= 3
+}

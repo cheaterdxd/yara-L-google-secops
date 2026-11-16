@@ -1,0 +1,72 @@
+# T1056.001 — Keylogging
+# Tactic: Collection, Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting keylogger installation and activity behavioral indicators on Windows endpoints.
+# Data Sources: Google Chronicle SIEM, Windows Sysmon via Chronicle Forwarder, Microsoft Defender for Endpoint via Chronicle integration, CrowdStrike Falcon via Chronicle integration
+# Required Sources: UDM Events (PROCESS_MODULE_LOAD), UDM Events (PROCESS_LAUNCH), UDM Events (REGISTRY_MODIFICATION), UDM Events (FILE_CREATION)
+# False Positives: Legitimate remote desktop and screen sharing software (TeamViewer, AnyDesk, Citrix Workspace) installs keyboard filter drivers and hooks to relay input from remote sessions — the module load and registry service signals will fire for these during normal installation and operation., Input method framework components on multilingual Windows systems (Microsoft IME, Google Japanese Input, Baidu Input) register global keyboard hooks and write configuration data to paths that may partially match keylogger naming patterns., Security awareness training platforms and insider threat detection tools that are themselves monitoring keyboard activity for compliance purposes will produce the same behavioral indicators as the malicious keyloggers they are designed to detect., Antivirus and EDR products performing kernel-level input monitoring as part of credential theft protection may load user32.dll from non-standard service host paths and register hooks — these processes will not appear in the standard process allowlist.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1056.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1056_001_keylogging_behavioral_indicators {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects behavioral indicators of keylogger installation and activity on Windows. Monitors for suspicious keyboard hook DLL loads, keylogger API usage in processes, keylogger-pattern registry service entries, and keylogger-named file creation."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1056.001"
+    mitre_attack_technique_name = "Input Capture: Keylogging"
+    false_positives = "Accessibility software, RMM agents, password managers, gaming peripherals software"
+    version = "1.0"
+
+  events:
+    (
+      /* Signal 1: Suspicious DLL load - user32.dll loaded by non-standard process */
+      (
+        $e.metadata.event_type = "PROCESS_MODULE_LOAD" and
+        re.regex($e.target.file.full_path, `(?i)\\user32\.dll$`) and
+        not re.regex($e.principal.process.file.full_path,
+          `(?i)\\(explorer|chrome|firefox|msedge|outlook|winword|excel|powerpnt|notepad|code|teams|slack|svchost|dwm|taskhostw|ctfmon|runtimebroker|conhost|werfault)\.exe$`)
+      )
+      or
+      /* Signal 2: Process creation with keylogger API patterns in command line */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        (
+          re.regex($e.target.process.command_line,
+            `(?i)(SetWindowsHookEx[AW]?|GetAsyncKeyState|GetKeyState\b|GetKeyboardState|RegisterHotKey|CallNextHookEx|WH_KEYBOARD(_LL)?)`) or
+          re.regex($e.target.process.file.full_path,
+            `(?i)(keylog|keystroke|\bklog\b|keycap|keyrecord|keyspy|kbdlog|keyboard_log|input_capture)`)
+        )
+      )
+      or
+      /* Signal 3: Registry modification creating keylogger service or hook persistence */
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION" and
+        (
+          re.regex($e.target.registry.registry_key,
+            `(?i)(keylog|kbdfilter|keyboard[._]filter|keylogdrv|kbdhook)`) or
+          (
+            re.regex($e.target.registry.registry_key,
+              `(?i)CurrentControlSet\\Services`) and
+            re.regex($e.target.registry.registry_value_data,
+              `(?i)(keylog|kbdfilter|keylogdrv|\bklog\b)`)
+          )
+        )
+      )
+      or
+      /* Signal 4: File creation with keylogger-related naming pattern */
+      (
+        $e.metadata.event_type = "FILE_CREATION" and
+        re.regex($e.target.file.full_path,
+          `(?i)(keylog|keystroke|\bklog\b|keycap|keyrecord|keyspy|keyboard_log|input_capture)`)
+      )
+    )
+
+  condition:
+    $e
+}

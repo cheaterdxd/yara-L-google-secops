@@ -1,0 +1,66 @@
+# T1569 — System Services
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting system service abuse across three primary patterns: (1) new service installations via Windows Event 7045/4697 with suspicious binary paths (temp directories, UNC paths, LOLBin executables), (2) sc.exe or net.exe invoked with service creation/modification arguments from known scripting engine parent processes, and (3) PsExec-style remote execution tools used to create or start services for lateral movement or execution.
+# Data Sources: Windows Event Log (System, Security), Sysmon Process Create, CrowdStrike Falcon, Carbon Black
+# Required Sources: GENERIC_EVENT, PROCESS_LAUNCH
+# False Positives: Enterprise software deployment systems (e.g., Microsoft Endpoint Configuration Manager) that stage service binaries in temp or ProgramData before moving them, triggering the suspicious path heuristic., Authorized use of PSExec or PAExec by IT operations teams performing remote maintenance — establish an allowlist of source hosts and accounts for approved usage., Security scanning tools (Tenable Nessus, Qualys, Rapid7) that enumerate or interact with services as part of credentialed vulnerability assessment scans., Software update mechanisms that temporarily use LOLBins like certutil to verify binary integrity before registering updated service binaries.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1569
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1569_System_Services_Abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects adversary abuse of system service mechanisms including suspicious service installations, sc.exe manipulation from scripting parents, and PsExec-style remote service creation. Covers Windows Event 7045/4697, Sysmon process events for sc.exe/net.exe, and lateral movement tools."
+    mitre_attack_tactic = "Execution, Persistence, Lateral Movement"
+    mitre_attack_technique = "T1569"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      // Pattern 1: New service installation with suspicious image path (via Windows Event 7045 or Security 4697)
+      $e1.metadata.event_type = "GENERIC_EVENT"
+      $e1.metadata.product_name = "Microsoft-Windows-Security-Auditing"
+      (
+        $e1.metadata.product_log_id = "7045"
+        OR $e1.metadata.product_log_id = "4697"
+      )
+      (
+        re.regex($e1.target.process.file.full_path, `(?i)\\(Temp|Users|AppData|Downloads|Public|ProgramData)\\`)
+        OR re.regex($e1.target.process.file.full_path, `^\\\\[0-9]{1,3}\.[0-9]{1,3}\.`)
+        OR re.regex($e1.target.process.file.full_path, `(?i)(certutil|bitsadmin|mshta|regsvr32|rundll32|wmic)\.exe`)
+      )
+      $e1.principal.hostname = $hostname
+    )
+    OR
+    (
+      // Pattern 2: sc.exe or net.exe service manipulation from suspicious parent process
+      $e2.metadata.event_type = "PROCESS_LAUNCH"
+      (
+        re.regex($e2.target.process.file.full_path, `(?i)\\(sc|net|net1)\.exe$`)
+      )
+      (
+        re.regex($e2.target.process.command_line, `(?i)(create|start|config|binpath)`)
+      )
+      (
+        re.regex($e2.principal.process.file.full_path, `(?i)\\(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|msiexec)\.exe$`)
+        OR re.regex($e2.target.process.command_line, `(?i)binpath\s*=\s*[^"]*\\(Temp|AppData|Downloads|Public|Users)\\`)
+        OR re.regex($e2.target.process.command_line, `(?i)(cmd\.exe /c|powershell)`)
+      )
+      $e2.principal.hostname = $hostname
+    )
+    OR
+    (
+      // Pattern 3: PsExec-style lateral movement tools spawning service-related processes
+      $e3.metadata.event_type = "PROCESS_LAUNCH"
+      re.regex($e3.principal.process.file.full_path, `(?i)\\(psexec|psexec64|paexec|remcom|csexec)\.exe$`)
+      $e3.principal.hostname = $hostname
+    )
+
+  condition:
+    $e1 or $e2 or $e3
+}

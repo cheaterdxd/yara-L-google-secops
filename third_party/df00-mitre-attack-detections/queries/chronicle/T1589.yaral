@@ -1,0 +1,70 @@
+# T1589 — Gather Victim Identity Information
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection for T1589 victim identity enumeration.
+# Data Sources: Azure Active Directory / Entra ID (Chronicle AZURE_AD log type via Pub/Sub ingestion), Windows Security Event Log via Chronicle Forwarder (WINDOWS_AD log type), Microsoft 365 via Chronicle MICROSOFT_365 log type, Okta or other IdP normalized to UDM USER_LOGIN events by Chronicle parsers
+# Required Sources: UDM events with metadata.event_type = USER_LOGIN, Chronicle log type: AZURE_AD, Chronicle log type: WINDOWS_AD, Chronicle log type: MICROSOFT_365
+# False Positives: Authorized internal security tooling (SOAR enrichment, UEBA baseline collectors) that performs batch identity resolution against Azure AD or on-prem AD for alert context, generating many USER_LOGIN BLOCK events from a single internal service account host IP, SSO reverse proxies, WAFs, or application delivery controllers that forward authentication requests from many external users behind a single egress NAT address, causing the single-source grouping to aggregate what are actually distributed end-user failures, Automated provisioning or deprovisioning workflows (Workday, ServiceNow HR integrations) that verify account existence for large employee cohorts during onboarding or offboarding runs, producing sequential auth failures from a single orchestration host, Cloud application misconfigurations where a service principal retries authentication across multiple tenant IDs or user UPNs before failing over, producing multi-target failures from a single client IP within a short window, Security assessment platforms (Tenable Identity Exposure, Semperis DSP) performing continuous Active Directory health monitoring that incidentally generates authentication probes for discovered accounts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1589
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1589_victim_identity_enumeration {
+  meta:
+    author = "Security Operations"
+    description = "Detects adversary username enumeration via differential authentication error codes (T1589 — Gather Victim Identity Information). Triggers when a single source IP probes >= 15 distinct account names within 1 hour using auth error codes that distinguish non-existent from valid-but-failed accounts. Covers Azure AD sign-in codes and on-prem Windows/Kerberos failures normalized to UDM."
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1589"
+    mitre_attack_subtechnique = "T1589.001"
+    reference = "https://attack.mitre.org/techniques/T1589/"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.security_result.action = "BLOCK"
+    (
+      // Azure AD / Entra ID error codes — UserNameDoesNotExist, AccountLocked, AccountDisabled, PasswordExpired, MFA required
+      $e.security_result.rule_id = "50034" or
+      $e.security_result.rule_id = "50053" or
+      $e.security_result.rule_id = "50055" or
+      $e.security_result.rule_id = "50057" or
+      $e.security_result.rule_id = "50072" or
+      $e.security_result.rule_id = "50076" or
+      // On-prem Kerberos and NTLM failure descriptions normalized via Chronicle Windows parser
+      re.regex($e.security_result.description,
+        `(?i)(UserNameDoesNotExist|AccountLocked|AccountDisabled|PasswordExpired|client\s*not\s*found|0xc0000064|0xC0000072|0xC000006D|KDC_ERR_C_PRINCIPAL_UNKNOWN)`) or
+      // Windows Event 4625 SubStatus via product_event_type
+      ($e.metadata.product_event_type = "4625" and
+        re.regex($e.security_result.description, `(?i)(0xc0000064|0xc0000072|0xc000006d)`)) or
+      // Kerberos Event 4771
+      ($e.metadata.product_event_type = "4771" and
+        re.regex($e.security_result.description, `(?i)(0x0+6\b|0x18\b|0x0+18\b)`))
+    )
+    $e.principal.ip = $src_ip
+    $e.target.user.userid = $username
+    not net.ip_in_range_cidr($src_ip, "127.0.0.0/8")
+    not net.ip_in_range_cidr($src_ip, "::1/128")
+    $username != "-"
+    $username != ""
+    $username != "ANONYMOUS LOGON"
+
+  match:
+    $src_ip over 1h
+
+  outcome:
+    $unique_user_count = count_distinct($username)
+    $total_failures = count($e.metadata.id)
+    $suspicion_level = if(
+      $unique_user_count >= 100, "Critical",
+      if($unique_user_count >= 50, "High",
+        if($unique_user_count >= 15, "Medium", "Low")
+      )
+    )
+
+  condition:
+    #username >= 15
+}

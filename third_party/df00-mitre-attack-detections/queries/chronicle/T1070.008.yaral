@@ -1,0 +1,47 @@
+# T1070.008 — Clear Mailbox Data
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Exchange PowerShell commands indicative of T1070.008 mailbox data clearing.
+# Data Sources: Windows endpoint telemetry forwarded to Chronicle via Bindplane or Chronicle forwarder, Google Workspace/Microsoft 365 audit logs normalized to UDM, EDR process telemetry
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Exchange Online migration projects where administrators routinely use Remove-MoveRequest and New-TransportRule as part of tenant-to-tenant migration runbooks, Scheduled compliance automation that invokes New-ComplianceSearchAction to enforce data retention policies with approved deletion workflows, Managed service provider scripts that reset inbox rules during bulk user onboarding or offboarding as part of Exchange account lifecycle management
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1070_008_clear_mailbox_data {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects adversary use of Exchange PowerShell cmdlets to clear mailbox data and destroy forensic evidence. Covers Remove-MailboxExportRequest, Search-Mailbox -DeleteContent, transport rule manipulation, inbox rule abuse, and purge-type hard-delete operations consistent with T1070.008."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.008"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1070/008/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(powershell\.exe|pwsh\.exe)$/
+    (
+      $e.target.process.command_line = /(?i)Remove-MailboxExportRequest/
+      or $e.target.process.command_line = /(?i)Remove-MailboxImportRequest/
+      or ($e.target.process.command_line = /(?i)Search-Mailbox/ and $e.target.process.command_line = /(?i)-DeleteContent/)
+      or $e.target.process.command_line = /(?i)Remove-TransportRule/
+      or $e.target.process.command_line = /(?i)Disable-TransportRule/
+      or $e.target.process.command_line = /(?i)New-TransportRule/
+      or $e.target.process.command_line = /(?i)Remove-InboxRule/
+      or $e.target.process.command_line = /(?i)Set-InboxRule/
+      or $e.target.process.command_line = /(?i)New-InboxRule/
+      or $e.target.process.command_line = /(?i)New-ComplianceSearchAction/
+      or $e.target.process.command_line = /(?i)Remove-MoveRequest/
+      or $e.target.process.command_line = /(?i)-PurgeType\s+HardDelete/
+      or $e.target.process.command_line = /(?i)-PurgeType\s+SoftDelete/
+      or $e.target.process.command_line = /(?i)Remove-RecoverableItemsCleanup/
+      or $e.target.process.command_line = /(?i)Set-MailboxMessageConfiguration/
+    )
+
+  condition:
+    $e
+}

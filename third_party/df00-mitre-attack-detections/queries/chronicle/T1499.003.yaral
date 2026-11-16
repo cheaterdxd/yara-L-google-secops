@@ -1,0 +1,60 @@
+# T1499.003 — Application Exhaustion Flood
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Detects T1499.003 Application Exhaustion Flood using Google Chronicle YARA-L 2.0 over UDM NETWORK_HTTP events.
+# Data Sources: Chronicle UDM NETWORK_HTTP events (ingested from web proxy, WAF, or load balancer logs), Google Cloud Load Balancer logs parsed to UDM, Palo Alto Networks / Zscaler proxy logs mapped to UDM, IIS / Apache / Nginx logs parsed via Chronicle ingestion parsers
+# Required Sources: UDM events (NETWORK_HTTP type)
+# False Positives: High-traffic legitimate services (news aggregators, API consumers, CDN origin pulls) that make large volumes of structured requests to /api/ or /search endpoints from a single egress IP — validate against known partner IP allowlists, Internal automated systems performing health monitoring, synthetic transactions, or chaos engineering tests that target auth or search endpoints at defined rates, Mobile application backends aggregating user requests behind a NAT gateway — all traffic appears to originate from one or a small set of IPs, making per-IP volume thresholds less reliable; supplement with per-session or per-user-agent analysis
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1499.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1499_003_application_exhaustion_flood {
+  meta:
+    author = "df00tech"
+    description = "Detects T1499.003 Application Exhaustion Flood — identifies single source IPs sending high-volume requests to resource-intensive web endpoints or triggering slow server responses indicative of CPU, thread pool, or database connection exhaustion."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1499.003"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.metadata.product_name != ""
+    (
+      re.regex($e.target.url, `(?i)/(search|query|find|report|export|download|generate|convert|login|authenticate|auth|oauth|signin|graphql|wp-login\.php|xmlrpc\.php|wp-admin|rest/api|odata|api/)`)
+      or $e.network.http.response_code = 429
+    )
+    $e.principal.ip = $src_ip
+    $e.target.hostname = $target_host
+
+  match:
+    $src_ip, $target_host over 5m
+
+  outcome:
+    $request_count = count($e.metadata.id)
+    $rate_limited_count = sum(
+      if($e.network.http.response_code = 429, 1, 0)
+    )
+    $server_error_count = sum(
+      if($e.network.http.response_code >= 500, 1, 0)
+    )
+    $unique_endpoints = count_distinct($e.target.url)
+    $max_response_bytes = max($e.network.http.response_body_bytes)
+    $error_rate = math.round(
+      ($server_error_count / $request_count) * 100
+    ) / 100
+    $threat_score = if(
+      $request_count > 1000 and $rate_limited_count > 20, 3,
+      if($request_count > 500 or $rate_limited_count > 10, 2, 1)
+    )
+    $is_high_rate_flood = if($request_count > 300, "true", "false")
+    $is_rate_limit_triggered = if($rate_limited_count > 10, "true", "false")
+
+  condition:
+    #e > 300
+    or ($rate_limited_count > 10)
+    or ($server_error_count > 50 and #e > 50)
+}

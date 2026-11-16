@@ -1,0 +1,49 @@
+# T1087 — Account Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting account discovery via Windows process enumeration.
+# Data Sources: Google Chronicle UDM - PROCESS_LAUNCH events, Windows Event Logs forwarded via Chronicle forwarder, Sysmon Event ID 1 via Chronicle forwarder
+# Required Sources: UDM Events (event_type = PROCESS_LAUNCH)
+# False Positives: Authorized IT operations teams executing scheduled AD inventory scripts or user reconciliation tasks using dsquery.exe or PowerShell AD cmdlets, Active Directory monitoring and management platforms (e.g., RSAT, ManageEngine AD Manager) that enumerate users and groups as part of normal health checks, Privileged access workstations (PAWs) used by domain administrators for routine AD administration, generating frequent AD enumeration activity
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1087
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1087_account_discovery {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects account discovery activity via Windows process enumeration tools and PowerShell AD cmdlets"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1087"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1087/"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\net\.exe|\\net1\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)net(1)?\s+(user|localgroup|group)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(useraccount|\sgroup\s)`)
+      ) or
+      re.regex($e.target.process.file.full_path, `(?i)(\\dsquery\.exe|\\nltest\.exe)$`) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\whoami\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)/(groups|all|priv)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\powershell\.exe|\\pwsh\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)(Get-LocalUser|Get-LocalGroup|Get-ADUser|Get-ADGroupMember|Get-ADObject|Get-ADPrincipalGroupMembership|DirectorySearcher|DirectoryEntry|\[adsi\])`)
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,54 @@
+# T1071.004 — DNS
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 detection rule for Google Chronicle SecOps that identifies DNS tunneling (T1071.004) by detecting source IPs making high volumes of DNS queries with anomalously long subdomain names.
+# Data Sources: Google Chronicle UDM (NETWORK_DNS events), DNS forwarder logs ingested via Chronicle Ingestion API, Palo Alto Networks DNS Security logs forwarded to Chronicle, Cisco Umbrella logs via Chronicle connector, Infoblox NIOS via Chronicle connector
+# Required Sources: UDM events with metadata.event_type = NETWORK_DNS
+# False Positives: Google and Akamai DNS-based load balancing infrastructure generates long unique subdomain sequences from corporate client IPs — known CDN and cloud provider apex domains should be excluded via a reference list in the rule's events section, Automated certificate management tooling (ACME DNS-01 validation via cert-manager or acme.sh) creates distinct long TXT record queries from CI/CD pipeline or Kubernetes controller IPs during certificate issuance, Enterprise EDR and XDR solutions beaconing to cloud telemetry endpoints using device-specific encoded hostnames produce the long-unique-subdomain signature from endpoint IP addresses at scale
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1071.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule dns_tunneling_long_subdomain_t1071_004 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects DNS tunneling via high-volume long subdomain queries (T1071.004)"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1071.004"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    priority = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "NETWORK_DNS"
+    $e.network.dns.questions.type in (
+      "TXT", "NULL", "CNAME", "MX", "A", "AAAA"
+    )
+    (
+      re.regex($e.network.dns.questions.name, `.{50,}`) or
+      re.regex($e.network.dns.questions.name, `(?:[^.]+[.]){5,}`)
+    )
+    $src_ip = $e.principal.ip
+    $top_domain = re.capture(
+      $e.network.dns.questions.name,
+      `[^.]+[.][^.]+$`
+    )
+
+  match:
+    $src_ip, $top_domain over 24h
+
+  outcome:
+    $query_count = count($e.metadata.id)
+    $unique_subdomains = count_distinct($e.network.dns.questions.name)
+    $max_domain_length = max(length($e.network.dns.questions.name))
+    $tunnel_confidence = if(
+      $unique_subdomains > 100 and $max_domain_length > 60, "high",
+      if($unique_subdomains > 50 and $max_domain_length > 50, "high", "medium")
+    )
+
+  condition:
+    #e > 20 and $unique_subdomains > 10
+}

@@ -1,0 +1,60 @@
+# T1036.012 — Browser Fingerprint
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1036.012 Browser Fingerprint spoofing.
+# Data Sources: Google Chronicle UDM (Unified Data Model) network events, Web proxy/gateway logs ingested into Chronicle, Endpoint telemetry with process-network correlation via Chronicle Endpoint agent
+# Required Sources: NETWORK_HTTP UDM events, Chronicle Endpoint Detection events
+# False Positives: Automated infrastructure monitoring tools (Nagios, Zabbix HTTP checks) that use wget or curl with custom UA strings to validate web service availability, Software deployment agents (SCCM, Ansible, Chef) making HTTP calls with tool-specific User-Agent strings that may match legacy browser patterns, Threat intelligence platforms or SOAR tools performing automated IOC lookups that send HTTP requests with non-standard UA strings
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1036.012
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule browser_fingerprint_ua_spoofing {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1036.012 Browser Fingerprint spoofing via known malware User-Agent strings or non-browser processes injecting UA headers"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1036.012"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    version = "1.0"
+    created = "2026-04-16"
+
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.network.http.user_agent != ""
+
+    // Match known malware UA strings documented in FatDuke and similar
+    (
+      re.regex($e.network.http.user_agent,
+        `(?i)(Mozilla/4\.0 \(compatible; MSIE 7\.0; Windows NT 5\.1\)|Mozilla/5\.0 \(compatible; MSIE 10\.0; Windows NT 6\.1; Trident/6\.0\)|Mozilla/5\.0 \(Windows NT 6\.1; WOW64; rv:40\.0\) Gecko/20100101 Firefox/40\.1)`
+      )
+      OR
+      // Non-browser process with explicit UA header injection
+      (
+        not re.regex($e.principal.process.file.full_path,
+          `(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|vivaldi\.exe|safari)`
+        )
+        AND
+        re.regex($e.principal.process.command_line,
+          `(?i)(User-Agent|useragent|-H\s+"Mozilla)`
+        )
+      )
+      OR
+      // Outdated browser UA strings from non-browser processes
+      (
+        not re.regex($e.principal.process.file.full_path,
+          `(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|vivaldi\.exe|safari)`
+        )
+        AND
+        re.regex($e.network.http.user_agent,
+          `(?i)(MSIE [5-9]\.|Firefox/[1-3][0-9]\.|Chrome/[1-5][0-9]\.)`
+        )
+      )
+    )
+
+  condition:
+    $e
+}

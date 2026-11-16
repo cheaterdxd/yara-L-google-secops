@@ -1,0 +1,89 @@
+# T1027.016 — Junk Code Insertion
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1027.016 Junk Code Insertion through behavioral UDM event correlation.
+# Data Sources: Google Chronicle with Windows Sysmon UDM ingestion, Chronicle Unified Data Model (UDM) events, Google Chronicle with Microsoft Defender for Endpoint integration
+# Required Sources: UDM FILE_CREATION events, UDM PROCESS_LAUNCH events
+# False Positives: Electron-based desktop applications (Teams, Slack, VS Code) that write and execute binaries from AppData directories during auto-update, Legitimate document-embedded macros used in approved business workflows that invoke helper executables, IT management tools that use Office automation to deploy or configure software, Security awareness training platforms that simulate phishing via Office macro execution
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.016
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_016_junk_code_insertion {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1027.016 Junk Code Insertion via behavioral indicators: executable file creation by Office/script interpreters, unsigned binary execution from writable paths, and excessive string concatenation in script command lines"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.016"
+    reference = "https://attack.mitre.org/techniques/T1027/016/"
+    created = "2026-04-13"
+    version = "1.0"
+
+  events:
+    // Signal 1: File creation event - executable dropped by suspicious parent
+    $file_event.metadata.event_type = "FILE_CREATION"
+    $file_event.principal.hostname = $hostname
+    $file_event.principal.user.userid = $username
+    (
+      $file_event.target.file.full_path = /(?i)\.exe$/ or
+      $file_event.target.file.full_path = /(?i)\.dll$/ or
+      $file_event.target.file.full_path = /(?i)\.scr$/
+    )
+    (
+      $file_event.principal.process.file.full_path = /(?i)\\winword\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\excel\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\powerpnt\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\outlook\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\mshta\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\wscript\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\cscript\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\cmd\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\rundll32\.exe$/ or
+      $file_event.principal.process.file.full_path = /(?i)\\regsvr32\.exe$/
+    )
+
+    // Signal 2: Process launch from temp/writable dir with suspicious parent
+    $proc_event.metadata.event_type = "PROCESS_LAUNCH"
+    $proc_event.principal.hostname = $hostname
+    $proc_event.principal.user.userid = $username
+    (
+      $proc_event.target.process.file.full_path = /(?i)\\Temp\\/ or
+      $proc_event.target.process.file.full_path = /(?i)\\AppData\\Local\\/ or
+      $proc_event.target.process.file.full_path = /(?i)\\AppData\\Roaming\\/ or
+      $proc_event.target.process.file.full_path = /(?i)\\Downloads\\/ or
+      $proc_event.target.process.file.full_path = /(?i)\\Users\\Public\\/
+    )
+    (
+      $proc_event.target.process.file.full_path = /(?i)\.exe$/ or
+      $proc_event.target.process.file.full_path = /(?i)\.scr$/ or
+      $proc_event.target.process.file.full_path = /(?i)\.com$/
+    )
+    not $proc_event.target.process.file.full_path = /(?i)C:\\Windows\\(System32|SysWOW64)\\/
+    (
+      $proc_event.principal.process.file.full_path = /(?i)\\winword\.exe$/ or
+      $proc_event.principal.process.file.full_path = /(?i)\\excel\.exe$/ or
+      $proc_event.principal.process.file.full_path = /(?i)\\mshta\.exe$/ or
+      $proc_event.principal.process.file.full_path = /(?i)\\wscript\.exe$/ or
+      $proc_event.principal.process.file.full_path = /(?i)\\cscript\.exe$/
+    )
+
+  match:
+    $hostname, $username over 1h
+
+  condition:
+    $file_event or $proc_event
+
+  outcome:
+    $risk_score = max(
+      if($file_event.metadata.event_type = "FILE_CREATION", 40, 0) +
+      if($proc_event.metadata.event_type = "PROCESS_LAUNCH", 50, 0)
+    )
+    $mitre_technique = "T1027.016"
+    $file_path = array_distinct($file_event.target.file.full_path)
+    $process_path = array_distinct($proc_event.target.process.file.full_path)
+    $parent_process = array_distinct($proc_event.principal.process.file.full_path)
+}

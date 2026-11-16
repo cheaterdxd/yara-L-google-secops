@@ -1,0 +1,40 @@
+# T1675 — ESXi Administration Command
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for detecting ESXi Administration Command (T1675).
+# Data Sources: Windows EDR, CrowdStrike Falcon, Carbon Black
+# Required Sources: PROCESS_LAUNCH
+# False Positives: VMware Tools auto-update mechanisms launching update executables as children of vmtoolsd.exe, Legitimate IT operations or configuration management tools configured to run via VMware Guest Operations APIs for automated provisioning or patch management, VMware vRealize Automation or vSphere Lifecycle Manager executing maintenance scripts through Guest Operations as part of scheduled infrastructure management tasks
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1675
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detection_t1675 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects ESXi Administration Command - T1675"
+    severity = "HIGH"
+    mitre_attack = "T1675"
+    reference = "https://attack.mitre.org/techniques/T1675/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.file.full_path = $process_path
+    $e.target.process.command_line = $cmdline
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(powershell|cmd|wscript|cscript|mshta|rundll32)\.exe$`) and
+      (
+        re.regex($e.target.process.command_line, `(?i)-enc(odedcommand)?`) or
+        re.regex($e.target.process.command_line, `(?i)-bypass`) or
+        re.regex($e.target.process.command_line, `(?i)(invoke-expression|iex\s)`) or
+        re.regex($e.target.process.command_line, `(?i)http://`)
+      )
+    )
+    not re.regex($e.principal.process.file.full_path, `(?i)(trustedinstaller|msiexec|svchost)`)
+
+  condition:
+    $e
+}

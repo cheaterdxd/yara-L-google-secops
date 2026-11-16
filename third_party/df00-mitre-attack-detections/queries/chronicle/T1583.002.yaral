@@ -1,0 +1,32 @@
+# T1583.002 — DNS Server
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection for DNS Server.
+# Data Sources: Google Chronicle SIEM, Endpoint telemetry, DNS logs
+# Required Sources: NETWORK_CONNECTION, DNS
+# False Positives: Security teams registering typosquat domains defensively to protect brand, Marketing teams registering new domains for campaigns or product launches, IT teams creating subdomains for new projects or staging environments, Certificate lifecycle automation triggering DNS record modifications
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1583.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1583_002_c2_infrastructure {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects potential C2 infrastructure activity and reconnaissance"
+    severity = "high"
+    confidence = "medium"
+    mitre_attack = "T1583.002"
+    reference = "https://attack.mitre.org/techniques/T1583/002/"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.target.port in (443, 8443, 4443, 8080, 53)
+    not re.regex($e.target.ip, `^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.)`)
+    re.regex($e.principal.process.file.full_path, `(?i)(powershell|cmd|wscript|cscript|nslookup|dig)`)
+
+  condition:
+    $e
+}

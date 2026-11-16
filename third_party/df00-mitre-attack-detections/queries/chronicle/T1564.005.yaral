@@ -1,0 +1,43 @@
+# T1564.005 — Hidden File System
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1564.005 hidden file system activity by matching raw disk device path access patterns and disk manipulation utilities (diskpart, format, bcdedit) spawned from scripting engines in UDM process launch events.
+# Data Sources: Chronicle UDM, Google Chronicle Endpoint Telemetry, Windows Event Forwarding to Chronicle
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Automated disk provisioning and partition management scripts run by IT operations during scheduled maintenance windows, Disaster recovery and backup agents invoking bcdedit or diskpart programmatically from service processes that inherit cmd.exe lineage, Forensic workstation tools that access raw disk device paths for evidence acquisition and are run interactively from PowerShell
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule hidden_file_system_t1564_005 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects hidden file system creation via raw disk access, diskpart/bcdedit execution from scripting engines, or direct physical device path access (T1564.005)"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1564.005"
+    severity = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1564/005/"
+    created = "2026-04-21"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+
+    (
+      // Disk manipulation tools launched from scripting engines
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(diskpart\.exe|format\.com|bcdedit\.exe)$`) and
+        re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|wscript\.exe|cscript\.exe)$`)
+      ) or
+      // Raw physical disk access via shell processes
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|cmd\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)(\\\\.\\PhysicalDrive|\\\\Device\\\\Harddisk|Device\\HarddiskVolume)`)
+      )
+    )
+
+  condition:
+    $e
+}

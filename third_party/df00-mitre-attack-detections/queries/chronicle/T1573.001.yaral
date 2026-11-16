@@ -1,0 +1,45 @@
+# T1573.001 — Symmetric Cryptography
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule correlating Windows cryptographic DLL load events (PROCESS_MODULE_LOAD) with subsequent outbound NETWORK_CONNECTION events to public IPs on non-standard ports from the same process within a 15-minute window.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows endpoints via Chronicle forwarder, Sysmon EventCode 7 (Image Load) and EventCode 3 (Network Connect) ingested as UDM events
+# Required Sources: UDM events: PROCESS_MODULE_LOAD, UDM events: NETWORK_CONNECTION
+# False Positives: Enterprise patch management or deployment agents that load bcrypt.dll for certificate validation and then connect to update servers on proprietary high ports, Database client libraries (ODBC, JDBC) loading ncrypt.dll for TLS-encrypted connections to cloud databases on non-standard database ports, Legitimate custom LOB (line-of-business) applications that implement AES encryption internally via bcryptprimitives.dll and phone home to vendor SaaS infrastructure on non-standard HTTPS alternatives
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1573.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1573_001_symmetric_crypto_c2 {
+  meta:
+    author = "df00tech"
+    description = "Detects processes loading Windows cryptographic libraries followed by outbound connections to public IPs on non-standard ports — behavioral signature of symmetric-cipher C2 (AES/RC4/DES). Covers Dridex, LockBit, Emotet, SMOKEDHAM patterns."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1573.001"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    // Event 1 — DLL load of a Windows cryptographic library
+    $dll_load.metadata.event_type = "PROCESS_MODULE_LOAD"
+    $dll_load.principal.hostname = $hostname
+    $dll_load.principal.process.pid = $pid
+    $dll_load.target.file.full_path = /(?i)(rsaenh\.dll|bcrypt\.dll|bcryptprimitives\.dll|cryptsp\.dll|ncrypt\.dll)$/
+    not $dll_load.principal.process.file.full_path = /(?i)(lsass\.exe|svchost\.exe|services\.exe|spoolsv\.exe|csrss\.exe|winlogon\.exe|smss\.exe|wininit\.exe|MsMpEng\.exe|NisSrv\.exe|SecurityHealthService\.exe|SearchIndexer\.exe|fontdrvhost\.exe|dwm\.exe|sihost\.exe|taskhostw\.exe|RuntimeBroker\.exe|chrome\.exe|firefox\.exe|msedge\.exe|iexplore\.exe|opera\.exe|brave\.exe|vivaldi\.exe)$/
+
+    // Event 2 — Outbound network connection to public IP on non-standard port
+    $net_conn.metadata.event_type = "NETWORK_CONNECTION"
+    $net_conn.principal.hostname = $hostname
+    $net_conn.principal.process.pid = $pid
+    $net_conn.network.direction = "OUTBOUND"
+    not $net_conn.target.ip = /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|169\.254\.|0\.0\.0\.0|::1)/
+    not $net_conn.target.port in (80, 443, 8080, 8443, 53, 22, 21, 20, 25, 587, 465, 993, 995, 110, 143, 3389)
+
+    // Temporal constraint — connection within 15 minutes of DLL load
+    $net_conn.metadata.event_timestamp.seconds <= $dll_load.metadata.event_timestamp.seconds + 900
+    $net_conn.metadata.event_timestamp.seconds >= $dll_load.metadata.event_timestamp.seconds
+
+  condition:
+    $dll_load and $net_conn
+}

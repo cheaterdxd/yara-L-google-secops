@@ -1,0 +1,44 @@
+# T1218.012 — Verclsid
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting verclsid.exe proxy execution abuse.
+# Data Sources: Google Chronicle UDM Events, Windows Endpoint Sensor (via Chronicle forwarder), Sysmon forwarded to Chronicle
+# Required Sources: UDM PROCESS_LAUNCH events
+# False Positives: System administrators running shell extension validation scripts via PowerShell that call verclsid.exe with known-good CLSIDs during system maintenance, Software installers or setup programs that spawn verclsid.exe as part of COM object registration verification workflows on managed endpoints, Automated build or QA pipelines on developer workstations that test COM interop scenarios using verclsid.exe
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.012
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule verclsid_proxy_execution_t1218_012 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects verclsid.exe abuse for COM proxy execution (T1218.012). Looks for verclsid launched from suspicious parents with CLSID args, or spawning suspicious child processes."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1218.012"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      // Pattern 1: verclsid.exe launched with CLSID from suspicious parent
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.target.process.file.full_path, `(?i)\\verclsid\.exe$`)
+      and (
+        re.regex($e.target.process.command_line, `\{[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}`)
+        or re.regex($e.principal.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|winword|excel|outlook)\.exe$`)
+        or re.regex($e.target.process.command_line, `(?i)(/s|/c)`)
+      )
+    )
+    or
+    (
+      // Pattern 2: suspicious child process spawned by verclsid.exe
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e.principal.process.file.full_path, `(?i)\\verclsid\.exe$`)
+      and re.regex($e.target.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta)\.exe$`)
+    )
+
+  condition:
+    $e
+}

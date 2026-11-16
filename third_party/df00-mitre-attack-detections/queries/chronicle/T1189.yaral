@@ -1,0 +1,77 @@
+# T1189 — Drive-by Compromise
+# Tactic: Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two YARA-L 2.0 rules for Google Chronicle detecting T1189 drive-by compromise.
+# Data Sources: Google Chronicle (UDM), Windows Sysmon via Chronicle Forwarder, Microsoft Defender for Endpoint via Chronicle integration
+# Required Sources: UDM Events (PROCESS_LAUNCH, FILE_CREATION)
+# False Positives: Browser-based remote desktop or screen-sharing tools (e.g., TeamViewer Web, AnyDesk browser launch) that drop helper executables to AppData during session initialization, Enterprise intranet portals distributing VPN client updates or certificate installers that cause the browser to write .exe files to Downloads followed by msiexec.exe execution, Browser extensions with native messaging hosts that write compiled helper binaries to AppData/Local during first-run setup, legitimately spawning cmd.exe to complete installation
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1189
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1189_drive_by_compromise {
+  meta:
+    author = "df00tech"
+    description = "Detects drive-by compromise: browser processes spawning suspicious child processes or writing executable/script files to user-writable directories"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1189"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1189/"
+    reference = "https://attack.mitre.org/techniques/T1189/"
+
+  events:
+    // Branch 1: Browser spawning suspicious child process
+    $proc_event.metadata.event_type = "PROCESS_LAUNCH"
+    $proc_event.principal.process.file.full_path = /(?i)(chrome\.exe|firefox\.exe|msedge\.exe|microsoftedge\.exe|iexplore\.exe|opera\.exe|brave\.exe|MicrosoftEdge\.exe)$/
+    $proc_event.target.process.file.full_path = /(?i)(powershell\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|wmic\.exe|msiexec\.exe|schtasks\.exe|at\.exe|net\.exe|netsh\.exe|sc\.exe|reg\.exe|bash\.exe|sh\.exe|curl\.exe|wget\.exe)$/
+    $proc_event.principal.hostname = $hostname
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $risk_score = 85
+    $detection_type = "BrowserSpawnedSuspiciousChild"
+    $browser_process = $proc_event.principal.process.file.full_path
+    $child_process = $proc_event.target.process.file.full_path
+    $command_line = $proc_event.target.process.command_line
+    $user = $proc_event.principal.user.userid
+
+  condition:
+    $proc_event
+}
+
+rule t1189_drive_by_browser_file_write {
+  meta:
+    author = "df00tech"
+    description = "Detects drive-by compromise: browser writing executable or script files to writable user directories"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1189"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1189/"
+
+  events:
+    $file_event.metadata.event_type = "FILE_CREATION"
+    $file_event.principal.process.file.full_path = /(?i)(chrome\.exe|firefox\.exe|msedge\.exe|microsoftedge\.exe|iexplore\.exe|opera\.exe|brave\.exe|MicrosoftEdge\.exe)$/
+    $file_event.target.file.full_path = /(?i)\.(exe|dll|bat|ps1|vbs|js|hta|scr|pif|com)$/
+    $file_event.target.file.full_path = /(?i)(\\Temp\\|\\AppData\\|\\Downloads\\|\\Public\\|\\ProgramData\\)/
+    not $file_event.target.file.full_path = /(?i)(\\Chrome\\|\\Firefox\\|\\Edge\\|Cache|Update|CrashReport)/
+    $file_event.principal.hostname = $hostname
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $risk_score = 80
+    $detection_type = "BrowserWroteExecutableToDisk"
+    $browser_process = $file_event.principal.process.file.full_path
+    $dropped_file = $file_event.target.file.full_path
+    $user = $file_event.principal.user.userid
+
+  condition:
+    $file_event
+}

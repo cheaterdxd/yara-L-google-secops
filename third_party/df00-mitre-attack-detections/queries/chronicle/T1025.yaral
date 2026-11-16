@@ -1,0 +1,72 @@
+# T1025 — Data from Removable Media
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1025 — bulk sensitive file creation/collection on removable media drives.
+# Data Sources: Google Chronicle SIEM, Google Workspace/Chronicle Unified Data Model (UDM), Windows endpoint telemetry forwarded to Chronicle, CrowdStrike Falcon or Carbon Black endpoint agents sending to Chronicle
+# Required Sources: UDM Events (FILE_CREATION, PROCESS_LAUNCH)
+# False Positives: Automated backup jobs writing to network-attached or USB storage appearing as removable drives, Software installers that extract files to temporary USB-based staging areas, Corporate imaging tools writing OS packages to USB deployment drives, Users bulk-exporting documents to portable drives before travel
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1025
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1025_data_from_removable_media {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects bulk access to sensitive files on removable media drives consistent with T1025 — adversary data collection from USB/optical media."
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1025"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+
+  events:
+    // Branch 1: Sensitive file created/modified on removable drive
+    $e1.metadata.event_type = "FILE_CREATION"
+    $e1.target.file.full_path = /(?i)^[D-Z]:\\/
+    $e1.target.file.full_path != /(?i)^C:\\/
+    (
+      $e1.target.file.full_path = /\.doc$/
+      or $e1.target.file.full_path = /\.docx$/
+      or $e1.target.file.full_path = /\.xls$/
+      or $e1.target.file.full_path = /\.xlsx$/
+      or $e1.target.file.full_path = /\.pdf$/
+      or $e1.target.file.full_path = /\.ppt$/
+      or $e1.target.file.full_path = /\.pptx$/
+      or $e1.target.file.full_path = /\.txt$/
+      or $e1.target.file.full_path = /\.csv$/
+      or $e1.target.file.full_path = /\.kdbx$/
+      or $e1.target.file.full_path = /\.pfx$/
+      or $e1.target.file.full_path = /\.pem$/
+      or $e1.target.file.full_path = /\.key$/
+      or $e1.target.file.full_path = /\.p12$/
+      or $e1.target.file.full_path = /\.zip$/
+      or $e1.target.file.full_path = /\.rar$/
+      or $e1.target.file.full_path = /\.7z$/
+      or $e1.target.file.full_path = /\.bak$/
+      or $e1.target.file.full_path = /\.sql$/
+      or $e1.target.file.full_path = /\.db$/
+      or $e1.target.file.full_path = /\.sqlite$/
+      or $e1.target.file.full_path = /\.conf$/
+      or $e1.target.file.full_path = /\.config$/
+      or $e1.target.file.full_path = /\.xml$/
+      or $e1.target.file.full_path = /\.json$/
+    )
+    $e1.principal.hostname = $hostname
+    $e1.principal.user.userid = $user
+
+  match:
+    $hostname, $user over 1h
+
+  outcome:
+    $event_count = count_distinct($e1.target.file.full_path)
+    $file_paths = array_distinct($e1.target.file.full_path)
+    $initiating_process = array_distinct($e1.principal.process.file.full_path)
+    $risk_score = if($event_count >= 100, 95,
+      if($event_count >= 50, 75,
+      if($event_count >= 20, 50, 25)))
+
+  condition:
+    #e1 >= 20
+}

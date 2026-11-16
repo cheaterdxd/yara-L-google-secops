@@ -1,0 +1,56 @@
+# T1134.005 — SID-History Injection
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting SID-History Injection across UDM-normalized events from Microsoft log sources.
+# Data Sources: Windows Security Event Log ingested via Chronicle Windows Event Log forwarder, Microsoft Defender for Endpoint process events via Chronicle-MDE integration (Google Security Operations), Active Directory audit events via Chronicle Google Cloud AD forwarder
+# Required Sources: UDM events with metadata.product_event_type in [4765, 4766, 4662] from Microsoft Security Auditing, UDM PROCESS_LAUNCH events from Microsoft endpoint telemetry sources
+# False Positives: Legitimate ADMT or enterprise migration tool execution during approved M&A or domain consolidation projects — product_event_type 4765 fires for every account processed at scale; correlate principal.user.userid against a Chronicle reference list of authorized migration service accounts, Authorized red team exercises using Mimikatz or custom SID injection tooling — validate target.process.file.full_path and principal.ip against approved assessment asset lists and scheduled maintenance windows recorded in your ITSM integration, PowerShell identity management runbooks from privileged workstations using Add-SIDHistory during forest restructuring — the command_line match on 'sIDHistory' will trigger; apply allowlist logic on principal.hostname matching known PAW or jump server inventory
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1134.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1134_005_SID_History_Injection {
+  meta:
+    author = "df00tech"
+    description = "Detects SID-History Injection via Windows Security Events 4765/4766, LDAP sIDHistory attribute writes captured by Event 4662, and execution of known SID injection tooling including Mimikatz sid::add, Empire, DCShadow, and PowerShell ADSI approaches"
+    mitre_attack_tactic = "Privilege Escalation"
+    mitre_attack_technique = "T1134.005"
+    reference = "https://attack.mitre.org/techniques/T1134/005/"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    created = "2026-04-20"
+
+  events:
+    $e.metadata.vendor_name = "Microsoft"
+    (
+      $e.metadata.product_event_type = "4765"
+      or
+      $e.metadata.product_event_type = "4766"
+      or (
+        $e.metadata.product_event_type = "4662"
+        and re.regex(
+          $e.target.resource.name,
+          `(?i)sIDHistory`
+        )
+      )
+      or (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex(
+          $e.target.process.command_line,
+          `(?i)(MISC::AddSid|sid::add|sIDHistory|sidHistory|Add-SIDHistory|DCShadow|Invoke-DCshadow|Set-ADUser.{0,60}sIDHistory)`
+        )
+      )
+      or (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex(
+          $e.target.process.file.full_path,
+          `(?i)\\mimikatz\.exe$`
+        )
+      )
+    )
+
+  condition:
+    $e
+}

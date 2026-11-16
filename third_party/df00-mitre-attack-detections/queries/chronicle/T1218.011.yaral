@@ -1,0 +1,42 @@
+# T1218.011 — Rundll32
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1218.011 rundll32.exe proxy execution by matching process launch events where rundll32.exe executes with command-line patterns indicative of JavaScript proxy execution, remote COM scriptlet loading via HTTP(S) or GetObject, LSASS credential dumping via MiniDump, ordinal-based loading, or a suspicious Office/script interpreter parent process.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows Event Logs forwarded to Chronicle, Sysmon events ingested via Chronicle forwarder, CrowdStrike Falcon telemetry via Chronicle integration
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Legitimate Group Policy processing by svchost.exe or mmc.exe that invokes rundll32.exe with shell32.dll Control_RunDLL for system management tasks, Help desk remote management tools such as ConnectWise or TeamViewer that chain PowerShell to rundll32.exe during remote support session initialization, Windows Installer (msiexec.exe) calling rundll32.exe with advpack.dll LaunchINFSection as part of standard software installation sequences
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.011
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule rundll32_proxy_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1218.011 rundll32.exe proxy execution abuse including JavaScript via mshtml, remote COM scriptlet loading, MiniDump credential dumping, ordinal-based DLL invocation, and suspicious parent process chains. Associated with Emotet, QakBot, Cobalt Strike, and FIN8."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1218.011"
+    reference = "https://attack.mitre.org/techniques/T1218/011/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i).*\\rundll32\.exe$/
+    (
+      $e.target.process.command_line = /(?i)(javascript:|mshtml|RunHTMLApplication)/ or
+      $e.target.process.command_line = /(?i)(https?:\/\/|GetObject\()/ or
+      $e.target.process.command_line = /(?i)MiniDump/ or
+      $e.target.process.command_line = /,#[0-9]+/ or
+      $e.principal.process.file.full_path = /(?i).*(winword|excel|outlook|powerpnt|cmd|powershell|wscript|cscript|mshta)\.exe$/
+    )
+    $hostname = $e.principal.hostname
+    $user = $e.principal.user.userid
+    $cmdline = $e.target.process.command_line
+    $parent = $e.principal.process.file.full_path
+
+  condition:
+    $e
+}

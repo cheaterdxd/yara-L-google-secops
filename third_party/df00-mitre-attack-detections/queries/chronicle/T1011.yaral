@@ -1,0 +1,50 @@
+# T1011 — Exfiltration Over Other Network Medium
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1011 exfiltration over alternate network mediums using UDM PROCESS_LAUNCH events.
+# Data Sources: Chronicle UDM - Windows endpoint telemetry via Chronicle Forwarder, Chronicle Ingestion: Microsoft Windows Event Logs (EventID 4688), Chronicle Ingestion: Sysmon via Chronicle Forwarder (EventID 1)
+# Required Sources: UDM Events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: IT administrators executing netsh wlan set or show commands during wireless infrastructure provisioning, troubleshooting runbooks, or post-imaging network validation scripts, Bluetooth peripheral onboarding workflows that invoke fsquirt.exe or bttray.exe as part of standard OS-level driver installation or device pairing initiated by IT or end users, Enterprise endpoint management suites such as SCCM, Intune, or Tanium invoking PowerShell to query Get-NetAdapter or Set-NetConnectionProfile state during scheduled compliance checks or hardware discovery cycles
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1011
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1011_exfil_other_network_medium {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1011 - Exfiltration Over Other Network Medium via wireless hotspot creation, Bluetooth file transfer utilities, or PowerShell wireless adapter manipulation from suspicious parent processes"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1011"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "IT admin netsh diagnostics, legitimate Bluetooth transfers, MDM or endpoint tooling using wireless PowerShell cmdlets"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)netsh\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)wlan`) or
+          re.regex($e.target.process.command_line, `(?i)hostednetwork`) or
+          re.regex($e.target.process.command_line, `(?i)mode=(allow|disallow)`) or
+          re.regex($e.target.process.command_line, `(?i)mobile.hotspot`)
+        )
+      ) or
+      re.regex($e.target.process.file.full_path, `(?i)(fsquirt|bttray)\.exe$`) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(bluetooth|wlan|wifi|netadapter|get-netadapter|new-wifiprofile|hostednetwork|softap|mobilebroadband|set-netconnectionprofile)`) and
+        (
+          re.regex($e.principal.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|rundll32|regsvr32|schtasks)\.exe$`) or
+          re.regex($e.target.process.command_line, `(?i)(-enc|-EncodedCommand|Compress-Archive|DownloadFile|exfil)`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

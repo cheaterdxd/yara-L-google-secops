@@ -1,0 +1,107 @@
+# T1583.005 — Botnet
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for T1583.005 Botnet detection using UDM normalized network events: (1) botnet_c2_beaconing_internal_host correlates 12+ outbound connections from the same source process to the same external IP/port combination within a 1-hour window, excluding browser processes and standard ports, with severity scoring based on connection count; (2) botnet_orb_relay_detection identifies hosts acting as relay nodes by detecting inbound external connections followed within 5 minutes by outbound connections to different external IPs, a hallmark of ORB network compromise.
+# Data Sources: Google Chronicle UDM with Endpoint Detection telemetry, Windows event forwarding via Chronicle forwarder, Network flow logs ingested to Chronicle, Palo Alto or Fortinet firewall logs normalized to UDM
+# Required Sources: UDM events with event_type NETWORK_CONNECTION, UDM events with network.direction INBOUND/OUTBOUND
+# False Positives: Automated CI/CD pipeline agents making repeated connections to artifact repositories or build servers at scheduled intervals, Corporate proxy or load balancer appliances that receive inbound client connections and forward to backend pools, appearing as relay nodes, Remote access tools with persistent heartbeat connections to relay infrastructure outside standard ports (e.g., Cloudflare Tunnel, ngrok), Network monitoring systems that actively poll multiple external endpoints for uptime checks at regular intervals, Cloud-synced collaboration tools with custom relay infrastructure on non-standard ports (e.g., enterprise Zoom, Webex with dedicated ports)
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1583.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule botnet_c2_beaconing_internal_host {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects botnet C2 beaconing behavior: internal process making 10+ repeated outbound connections to the same external IP on non-standard ports at regular intervals (4-120/hr), characteristic of fixed-interval C2 polling"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1583.005"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.principal.ip = $src_ip
+    $e.target.ip = $dst_ip
+    $e.target.port = $dst_port
+    $e.principal.process.file.full_path = $proc_path
+
+    // Exclude RFC1918 / loopback / APIPA destinations
+    not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($e.target.ip, "127.0.0.0/8")
+    not net.ip_in_range_cidr($e.target.ip, "169.254.0.0/16")
+
+    // Exclude common browser and trusted system processes
+    not re.regex($e.principal.process.file.full_path,
+      `(?i)(chrome\.exe|firefox\.exe|msedge\.exe|Teams\.exe|OneDrive\.exe|outlook\.exe|svchost\.exe|SearchIndexer\.exe|MicrosoftEdgeUpdate\.exe)$`)
+
+    // Exclude standard web/DNS ports
+    $e.target.port != 80
+    $e.target.port != 443
+    $e.target.port != 53
+
+  match:
+    $src_ip, $dst_ip, $dst_port, $proc_path over 1h
+
+  outcome:
+    $connection_count = count_distinct($e.metadata.id)
+    $sample_process = array_distinct($e.principal.process.file.full_path)
+    $beacon_score = if($connection_count > 100, "Critical",
+      if($connection_count > 50, "High",
+        if($connection_count > 20, "Medium", "Low")))
+
+  condition:
+    #e >= 12
+}
+
+rule botnet_orb_relay_detection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects ORB (Operational Relay Box) network relay behavior: host accepts external inbound connection then initiates outbound connection to different external IP within 5 minutes, indicating potential botnet relay node compromise"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1583.005"
+    severity = "CRITICAL"
+    priority = "HIGH"
+
+  events:
+    // Inbound connection from external source
+    $inbound.metadata.event_type = "NETWORK_CONNECTION"
+    $inbound.network.direction = "INBOUND"
+    $inbound.principal.ip = $ext_src_ip
+    $inbound.target.ip = $relay_host_ip
+    not net.ip_in_range_cidr($inbound.principal.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($inbound.principal.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($inbound.principal.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($inbound.principal.ip, "127.0.0.0/8")
+
+    // Outbound connection to different external target from same host
+    $outbound.metadata.event_type = "NETWORK_CONNECTION"
+    $outbound.network.direction = "OUTBOUND"
+    $outbound.principal.ip = $relay_host_ip
+    $outbound.target.ip = $ext_dst_ip
+    not net.ip_in_range_cidr($outbound.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($outbound.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($outbound.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($outbound.target.ip, "127.0.0.0/8")
+    $outbound.target.port != 80
+    $outbound.target.port != 443
+    $outbound.target.port != 53
+
+    // Inbound source and outbound destination must differ (true relay)
+    $ext_src_ip != $ext_dst_ip
+
+  match:
+    $relay_host_ip over 5m
+
+  outcome:
+    $relay_events = count_distinct($outbound.metadata.id)
+    $inbound_sources = array_distinct($ext_src_ip)
+    $outbound_targets = array_distinct($ext_dst_ip)
+
+  condition:
+    #outbound >= 3 and #inbound >= 1
+}

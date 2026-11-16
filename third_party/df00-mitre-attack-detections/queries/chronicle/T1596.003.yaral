@@ -1,0 +1,27 @@
+# T1596.003 — Digital Certificates
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule for Digital Certificates (T1596.003).
+# Data Sources: Google Chronicle SIEM, Chronicle UDM
+# Required Sources: PROCESS_LAUNCH, PROCESS_OPEN
+# False Positives: Security team running TLS vulnerability assessments or certificate audits using sslyze, sslscan, or testssl.sh against internal or external infrastructure, DevSecOps pipelines querying crt.sh or CertSpotter APIs to monitor the organization's own certificate inventory for expiring, unauthorized, or mis-issued certificates, Network engineers using openssl s_client for TLS debugging, cipher suite negotiation verification, or certificate chain validation during incident response, Automated certificate monitoring or renewal tools (Certbot, ACME clients, internal PKI management scripts) performing certificate transparency checks or CA API queries
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1596.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1596_003_digital_certificates {
+  meta:
+    author = "df00tech"
+    description = "Detects Digital Certificates (T1596.003)"
+    mitre_attack_tactic = "TA0043"
+    mitre_attack_technique = "T1596.003"
+    confidence = "low"
+    severity = "medium"
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.command_line != ""
+  condition:
+    $e
+}

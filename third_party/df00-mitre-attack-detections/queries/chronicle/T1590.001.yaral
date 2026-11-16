@@ -1,0 +1,48 @@
+# T1590.001 — Domain Properties
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting domain property reconnaissance (T1590.001) using UDM normalized telemetry.
+# Data Sources: Google Chronicle UDM, Chronicle Forwarder with Windows Sysmon (PROCESS_LAUNCH, NETWORK_CONNECTION UDM event types), Chronicle native Azure AD ingestion (for supplementary identity context), EDR telemetry normalized to UDM (CrowdStrike, Carbon Black, SentinelOne Chronicle parsers)
+# Required Sources: UDM events (PROCESS_LAUNCH), UDM events (NETWORK_CONNECTION)
+# False Positives: Authorized Azure AD tenant administrators or identity governance platforms using AADInternals functions for legitimate tenant configuration auditing, license assignment review, or conditional access health checks under approved change tickets, Corporate internet proxies or DNS resolvers that contact WHOIS or RDAP endpoints as part of domain reputation lookups and URL categorization decisions, generating NETWORK_CONNECTION events from proxy process image paths, Purple team or red team exercises using AADInternals or O365 public API reconnaissance against the organization's own environment within a formally authorized and time-boxed scope of work
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1590.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1590_001_domain_properties_recon {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1590.001 domain property reconnaissance via AADInternals, WHOIS tools, O365 public API abuse, and connections to WHOIS/RDAP services"
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1590.001"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    rule_version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        re.regex($e.target.process.command_line, `(?i)(Get-AADIntTenantDomains|Get-AADIntLoginInformation|Get-AADIntTenantDetails|Invoke-AADIntReconAsOutsider|Get-AADIntCompanyInformation|AADInternals|Get-AADIntTenantID|Get-AADIntOpenIDConfiguration|Get-AADIntTenantDomainNames)`) or
+        re.regex($e.target.process.command_line, `(?i)GetUserRealm`) or
+        (
+          re.regex($e.target.process.command_line, `(?i)autodiscover`) and
+          re.regex($e.target.process.command_line, `(?i)microsoft`)
+        ) or
+        re.regex($e.target.process.command_line, `(?i)(whois\.exe|Get-Whois|Invoke-Whois)`)
+      )
+    ) or
+    (
+      $e.metadata.event_type = "NETWORK_CONNECTION" and
+      (
+        $e.target.port = 43 or
+        re.regex($e.target.hostname, `(?i)(whois\.iana\.org|who\.is|whois\.domaintools\.com|whois\.verisign-grs\.com|rdap\.org|rdap\.arin\.net|rdap\.verisign\.com)`)
+      ) and
+      not re.regex($e.principal.process.file.full_path, `(?i)(svchost\.exe$|lsass\.exe$|services\.exe$|MsMpEng\.exe$|SearchProtocolHost\.exe$)`)
+    )
+
+  condition:
+    $e
+}

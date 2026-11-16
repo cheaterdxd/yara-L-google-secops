@@ -1,0 +1,69 @@
+# T1204.002 — Malicious File
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1204.002 malicious file execution across four behavioral branches: Office/PDF applications spawning suspicious child processes (macro/embedded script execution), script interpreters launching from user-writable paths, Explorer spawning suspicious processes in LNK/ISO delivery context, and dropped executables launched from temp/download directories.
+# Data Sources: Chronicle UDM (Unified Data Model), Google Chronicle SIEM with Windows endpoint telemetry, Sysmon via Chronicle forwarder or BindPlane
+# Required Sources: UDM events with event_type PROCESS_LAUNCH
+# False Positives: Legitimate macro-enabled Office templates used in financial modeling or legal document workflows may trigger Branch 1 — build an allowlist based on the specific child process arguments and correlate with the originating Office document hash., End-user scripting tools such as AutoHotkey, NirCmd, or scheduled Windows logon scripts stored in AppData\Roaming will trigger Branch 2 — suppress by correlating child process signing status and script file location against the IT-approved software inventory., Software center or package manager tools (Chocolatey, Scoop, WinGet) that download and execute installers in user-accessible paths via Explorer will trigger Branch 3 or Branch 4 — identify by the parent process chain including known package manager executables and correlate with software request tickets.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1204.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1204_002_malicious_file_execution {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1204.002 - Malicious File execution via Office/PDF parent spawning suspicious child processes, script interpreters from user-writable paths, LNK/ISO shell execution, or dropped executable launch."
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1204.002"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    // Bind the process start event
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+
+    // Capture relevant fields
+    $parent = $e.principal.process.file.full_path
+    $child = $e.target.process.file.full_path
+    $cmdline = $e.target.process.command_line
+    $parent_cmdline = $e.principal.process.command_line
+    $hostname = $e.principal.hostname
+    $user = $e.principal.user.userid
+
+    // Branch 1 & 4: Office/PDF parent process condition
+    (
+      // Branch 1: Office/PDF spawning suspicious child
+      (
+        re.regex($parent, `(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|onenote\.exe|mspub\.exe|visio\.exe|wordpad\.exe|acrord32\.exe|foxitreader\.exe|sumatra\.exe)$`) and
+        re.regex($child, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|msbuild\.exe|wmic\.exe|installutil\.exe|regasm\.exe|regsvcs\.exe|cmstp\.exe|schtasks\.exe|net\.exe|netsh\.exe|curl\.exe|wget\.exe)$`)
+      ) or
+      // Branch 2: Script interpreter from user-writable path or script extension
+      (
+        re.regex($child, `(?i)(wscript\.exe|cscript\.exe|mshta\.exe)$`) and
+        (
+          re.regex($cmdline, `(?i)(appdata\\local\\temp|appdata\\roaming|\\downloads\\|\\desktop\\|\\public\\|windows\\temp)`) or
+          re.regex($cmdline, `(?i)\.(vbs|vbe|js|jse|wsf|hta|ps1)["'\s]?`)
+        )
+      ) or
+      // Branch 3: Explorer spawning suspicious child from LNK/ISO context
+      (
+        re.regex($parent, `(?i)explorer\.exe$`) and
+        re.regex($child, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|msbuild\.exe)$`) and
+        (
+          re.regex($cmdline, `(?i)(appdata\\local\\temp|appdata\\roaming|\\downloads\\|\\desktop\\|\\public\\|windows\\temp)`) or
+          re.regex($parent_cmdline, `(?i)\.lnk`)
+        )
+      ) or
+      // Branch 4: Dropped executable launched from user-writable path
+      (
+        re.regex($child, `(?i)\.(exe|scr|pif|cpl|com)$`) and
+        re.regex($cmdline, `(?i)(appdata\\local\\temp|appdata\\roaming|\\downloads\\|\\desktop\\|\\public\\|windows\\temp)`) and
+        re.regex($parent, `(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|onenote\.exe|acrord32\.exe|foxitreader\.exe|explorer\.exe|winrar\.exe|7z\.exe|7zg\.exe|winzip32\.exe)$`)
+      )
+    )
+
+  condition:
+    $e
+}

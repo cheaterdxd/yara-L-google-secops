@@ -1,0 +1,37 @@
+# T1070.010 — Relocate Malware
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule with two independent detection branches unified by an OR condition.
+# Data Sources: Google Chronicle SIEM with UDM normalization, Chronicle forwarder ingesting Windows Sysmon or EDR telemetry, Google Cloud Chronicle via Windows Event Log connector
+# Required Sources: PROCESS_LAUNCH UDM events, FILE_CREATION UDM events
+# False Positives: Legitimate administrative use of PowerShell Copy-Item or robocopy targeting System32 or ProgramData during sanctioned deployment workflows, common in enterprise patching pipelines where the process image, command verb, and destination path all match detection conditions, Windows Installer (msiexec.exe) spawning cmd.exe child processes that copy DLL or EXE payloads to System32 or SysWOW64 during in-progress MSI installations, where Chronicle may attribute the FILE_CREATION event to the cmd.exe intermediary, Remote management and helpdesk tooling such as PDQ Deploy or Ansible over WinRM that drop PowerShell scripts or executables into AppData\Roaming or Users\Public for subsequent execution during sanctioned remote support sessions
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.010
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule malware_relocation_t1070_010 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1070.010 - Malware relocation via copy/move commands or executable file creation in suspicious directories by shell or LOLBin processes"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.010"
+    reference = "https://attack.mitre.org/techniques/T1070/010/"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.target.process.file.full_path = /(?i)\\(cmd|powershell|pwsh|xcopy|robocopy)\.exe$/
+    $proc.target.process.command_line = /(?i)(\scopy\s|xcopy\s|robocopy\s|Copy-Item|Move-Item|\smove\s|\bcp\s|\bmv\s|Rename-Item)/
+    $proc.target.process.command_line = /(?i)\.(exe|dll|bat|ps1|vbs|js|hta|cmd|scr|cpl|pif)/
+
+    $file.metadata.event_type = "FILE_CREATION"
+    $file.target.file.full_path = /(?i)(\\AppData\\Roaming\\|\\AppData\\Local\\Temp\\|\\ProgramData\\|\\Windows\\Temp\\|\\Users\\Public\\|\\Windows\\System32\\|\\Windows\\SysWOW64\\|\\\$Recycle\.Bin)/
+    $file.target.file.full_path = /(?i)\.(exe|dll|bat|ps1|vbs|js|hta|cmd|scr|cpl|pif)$/
+    $file.principal.process.file.full_path = /(?i)\\(cmd|powershell|pwsh|xcopy|robocopy|explorer|wscript|cscript|mshta)\.exe$/
+
+  condition:
+    $proc or $file
+}

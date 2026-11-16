@@ -1,0 +1,62 @@
+# T1205 — Traffic Signaling
+# Tactic: Defense Evasion, Persistence, Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Traffic Signaling (T1205) across three behavioral signals using UDM event fields: (1) PROCESS_MODULE_LOAD events where known raw packet capture libraries (wpcap.dll, npcap.dll, packet.dll) are loaded by processes not in the trusted network-tool whitelist — indicative of passive magic-packet sniffers like those used by Winnti or Turla Penquin; (2) NETWORK_CONNECTION UDP events targeting port 7 or 9 destined for broadcast IP addresses, consistent with Ryuk ransomware Wake-on-LAN lateral movement; (3) repeated outbound NETWORK_CONNECTION failures aggregated over a 1-minute window per host, indicating potential port-knocking activation sequences.
+# Data Sources: Google Chronicle UDM with Windows Sysmon forwarding, Endpoint telemetry via Chronicle SIEM forwarder, EDR/AV telemetry normalized to Chronicle UDM, Network flow data ingested into Chronicle
+# Required Sources: UDM events (PROCESS_MODULE_LOAD), UDM events (NETWORK_CONNECTION), Chronicle entity graph for principal.hostname
+# False Positives: Custom monitoring or observability tooling built on libpcap that loads wpcap.dll or npcap.dll for internal telemetry collection, especially on servers running network performance baselines, Legitimate WoL management software deployed by IT operations (e.g., SolarWinds WoL, ManageEngine Desktop Central) that routinely broadcasts UDP port 7/9 magic packets to wake devices, VPN clients or Zero Trust network access agents that attempt multiple port connections during authentication or tunnel negotiation, producing failed-connection bursts resembling port knocking
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1205
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1205_traffic_signaling_detection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Traffic Signaling (T1205) via passive listener library loading, Wake-on-LAN broadcasts, and port knocking sequences"
+    mitre_attack_tactic = "Command and Control, Persistence"
+    mitre_attack_technique = "T1205"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    // Signal 1: Packet capture library loaded by unexpected process
+    (
+      $e.metadata.event_type = "PROCESS_MODULE_LOAD"
+      and (
+        re.regex($e.target.file.full_path, `(?i)(wpcap\.dll|npcap\.dll|packet\.dll)$`)
+      )
+      and not re.regex($e.principal.process.file.full_path, `(?i)(wireshark|tshark|dumpcap|rawcap|networkminer|fiddler|procexp)\.exe$`)
+    )
+    or
+    // Signal 2: Wake-on-LAN UDP to broadcast address on port 7 or 9
+    (
+      $e.metadata.event_type = "NETWORK_CONNECTION"
+      and $e.network.ip_protocol = "UDP"
+      and (
+        $e.target.port = 7
+        or $e.target.port = 9
+      )
+      and (
+        $e.target.ip = "255.255.255.255"
+        or re.regex($e.target.ip, `\.255$`)
+      )
+    )
+    or
+    // Signal 3: Port knocking — multiple distinct failed connections within short window
+    (
+      $e.metadata.event_type = "NETWORK_CONNECTION"
+      and $e.network.direction = "OUTBOUND"
+      and (
+        $e.metadata.description = "connection_refused"
+        or $e.network.session_id = ""
+      )
+    )
+
+  match:
+    $e.principal.hostname over 1m
+
+  condition:
+    $e
+}

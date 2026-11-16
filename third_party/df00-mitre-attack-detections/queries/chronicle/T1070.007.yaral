@@ -1,0 +1,64 @@
+# T1070.007 — Clear Network Connection History and Configurations
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1070.007 across three UDM event types: REGISTRY_MODIFICATION events targeting Terminal Server Client registry paths (RDP connection history), FILE_DELETION events for Default.rdp and RDP cache artifacts, and PROCESS_LAUNCH events where the command line contains network state erasure commands including netsh resets, arp -d, route delete, and DNS cache flushing.
+# Data Sources: Google Chronicle SIEM (UDM events), Microsoft Windows Sysmon (via Chronicle Forwarder), Windows Security Events (via Chronicle Forwarder), Elastic Endpoint Security events forwarded to Chronicle
+# Required Sources: UDM Events (REGISTRY_MODIFICATION), UDM Events (FILE_DELETION), UDM Events (PROCESS_LAUNCH)
+# False Positives: Group Policy Objects or Intune configuration profiles that enforce removal of RDP connection history across managed devices as part of organizational hardening standards, IT help desk technicians flushing DNS resolver cache and resetting IP configurations on endpoints as part of standard network troubleshooting procedures, Enterprise VPN clients (Cisco AnyConnect, GlobalProtect) programmatically modifying routing tables via route delete commands during connection and disconnection lifecycle events
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1070_007_clear_network_connection_history {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1070.007 - Adversary clearing of RDP connection history via registry deletion, RDP file removal, or CLI-based network config erasure commands"
+    mitre_attack_technique = "T1070.007"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_subtechnique = "Clear Network Connection History and Configurations"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2024-01-01"
+
+  events:
+    (
+      // Detection 1: RDP Registry History Deletion
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION" and
+        (
+          re.regex($e.target.registry.registry_key,
+            `(?i)Software\\Microsoft\\Terminal Server Client\\(Default|Servers)`) or
+          re.regex($e.target.registry.registry_key,
+            `(?i)Terminal Server Client\\(Default|Servers)`)
+        )
+      ) or
+      // Detection 2: RDP File History Deletion
+      (
+        $e.metadata.event_type = "FILE_DELETION" and
+        (
+          re.regex($e.target.file.full_path, `(?i)Default\.rdp`) or
+          re.regex($e.target.file.full_path, `(?i)Terminal Server Client.Cache`)
+        )
+      ) or
+      // Detection 3: CLI Network History Cleanup via process execution
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        (
+          re.regex($e.target.process.command_line,
+            `(?i)netsh\s+(wlan\s+delete|advfirewall\s+reset|int\s+ip\s+reset|interface\s+ip\s+reset)`) or
+          re.regex($e.target.process.command_line,
+            `(?i)(Clear-DnsClientCache|ipconfig\s+/flushdns|dnscmd\s+/clearcache)`) or
+          re.regex($e.target.process.command_line, `(?i)arp\s+-d`) or
+          re.regex($e.target.process.command_line, `(?i)route\s+delete`) or
+          re.regex($e.target.process.command_line,
+            `(?i)(del|Remove-Item|erase|reg\s+delete).*(Terminal Server Client|Default\.rdp)`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

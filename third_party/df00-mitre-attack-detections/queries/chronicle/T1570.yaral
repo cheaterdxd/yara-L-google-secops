@@ -1,0 +1,60 @@
+# T1570 — Lateral Tool Transfer
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting lateral tool transfer via three distinct branches: LOLBin abuse (certutil, bitsadmin, esentutl, robocopy) with transfer-indicative command-line patterns or UNC paths; known transfer utilities (psexec, scp, sftp, winscp) invoking internal RFC1918 addresses or UNC shares; and file creation events where the System process drops executable file types into sensitive Windows directories, which is characteristic of SMB-based lateral file staging.
+# Data Sources: Google Chronicle UDM, Windows endpoint telemetry ingested into Chronicle, Sysmon events forwarded to Chronicle
+# Required Sources: process_launch UDM events, file_creation UDM events
+# False Positives: Enterprise software distribution tools (PDQ Deploy, SCCM) using psexec or robocopy to push software packages to endpoints across administrative shares, Certutil invoked by PKI administrators for certificate enrollment and cache operations that incidentally match urlcache patterns, IT helpdesk remote support sessions using WinSCP or FTP tools to transfer configuration files to internal servers in RFC1918 space, Legitimate Windows Update mechanisms or trusted installer processes creating system binaries in System32 via SYSTEM context
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1570
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule lateral_tool_transfer_t1570 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects lateral tool transfer via LOLBin abuse, transfer tools targeting internal hosts, and SMB-initiated executable drops. Covers T1570 TTPs used by BlackCat, Netwalker, Emotet, and Volt Typhoon."
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1570"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    (
+      // Branch A: LOLBin transfers — certutil, bitsadmin, esentutl, robocopy with transfer indicators
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and (
+          re.regex($e.principal.process.file.full_path, `(?i)(certutil|bitsadmin|esentutl|robocopy|expand|makecab)\.exe$`)
+        )
+        and (
+          re.regex($e.principal.process.command_line, `(?i)(urlcache|/transfer|/addfile|/upload|/cp\b|\\\\[A-Za-z0-9\-\.]+\\)`) or
+          re.regex($e.principal.process.command_line, `\\\\\\\\`)
+        )
+      )
+      or
+      // Branch B: Transfer tools referencing internal RFC1918 hosts or UNC paths
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.principal.process.file.full_path, `(?i)(psexec|psexec64|paexec|scp|sftp|winscp|ftp)\.exe$`)
+        and (
+          re.regex($e.principal.process.command_line, `\\\\\\\\`) or
+          re.regex($e.principal.process.command_line, `(?:10\.|172\.(?:1[6-9]|2[0-9]|3[01])\.|192\.168\.)`)
+        )
+      )
+      or
+      // Branch C: SMB executable drops — System process writing executables to sensitive dirs
+      (
+        $e.metadata.event_type = "FILE_CREATION"
+        and re.regex($e.target.file.full_path, `(?i)\.(exe|dll|ps1|bat|cmd|vbs|hta|js|msi|scr|cpl)$`)
+        and re.regex($e.target.file.full_path, `(?i)\\(Windows\\Temp|Windows\\System32|Windows\\SysWOW64|ProgramData|Users\\Public)\\`)
+        and re.regex($e.principal.process.file.full_path, `(?i)(^|\\)System$`)
+      )
+    )
+
+  condition:
+    $e
+}

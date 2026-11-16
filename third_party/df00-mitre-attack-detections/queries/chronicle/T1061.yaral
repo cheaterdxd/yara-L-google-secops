@@ -1,0 +1,62 @@
+# T1061 — Graphical User Interface
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule correlating USER_LOGIN events (remote interactive INBOUND INTERACTIVE mechanism — RDP) with PROCESS_LAUNCH events where the parent is explorer.exe and the child is a high-risk executable within 60 minutes (3600 seconds) on the same hostname.
+# Data Sources: Google Chronicle SIEM, Windows Security Events via Chronicle Forwarder or BindPlane, Sysmon events via Chronicle Forwarder or BindPlane with Windows parser
+# Required Sources: UDM events: USER_LOGIN, UDM events: PROCESS_LAUNCH
+# False Positives: IT administrators performing legitimate remote administration via RDP who launch shells or management consoles from the Windows desktop during scheduled maintenance windows, VDI or Citrix environments where all user sessions are remote interactive by design and users routinely double-click desktop applications that spawn cmd.exe or PowerShell as part of normal workflows, Monitoring or endpoint management agents running within a user session context that execute diagnostic tools appearing as explorer.exe children in the process tree
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1061
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1061_rdp_gui_suspicious_process_spawn {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects remote interactive RDP logon followed by a suspicious process spawned from explorer.exe within 60 minutes on the same host — T1061 Graphical User Interface"
+    mitre_attack_technique = "T1061"
+    mitre_attack_tactic = "Execution"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $logon.metadata.event_type = "USER_LOGIN"
+    $logon.extensions.auth.mechanism = "INTERACTIVE"
+    $logon.network.direction = "INBOUND"
+    NOT net.ip_in_range_cidr($logon.principal.ip, "127.0.0.0/8")
+    NOT net.ip_in_range_cidr($logon.principal.ip, "::1/128")
+    NOT re.regex($logon.target.user.userid, `\$$`)
+
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($proc.principal.process.file.full_path, `(?i)explorer\.exe$`)
+    (
+      re.regex($proc.target.process.file.full_path, `(?i)cmd\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)powershell\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)pwsh\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)mshta\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)wscript\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)cscript\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)regsvr32\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)rundll32\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)msbuild\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)certutil\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)bitsadmin\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)\bnet\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)net1\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)whoami\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)nltest\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)wmic\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)mimikatz\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)procdump\.exe$`) or
+      re.regex($proc.target.process.file.full_path, `(?i)psexec\.exe$`)
+    )
+
+    $logon.target.hostname = $proc.principal.hostname
+    $logon.metadata.event_timestamp.seconds <= $proc.metadata.event_timestamp.seconds
+    ($proc.metadata.event_timestamp.seconds - $logon.metadata.event_timestamp.seconds) <= 3600
+
+  condition:
+    $logon and $proc
+}

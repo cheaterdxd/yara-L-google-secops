@@ -1,0 +1,65 @@
+# T1568.003 — DNS Calculation
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting the APT12 DNS Calculation C2 technique (T1568.003).
+# Data Sources: Google Chronicle UDM — Endpoint sensor (CrowdStrike, Carbon Black, SentinelOne via Chronicle ingestion), Chronicle SIEM — Windows Sysmon Event ID 3 via forwarder, Chronicle UDM network connection events
+# Required Sources: UDM events with metadata.event_type = NETWORK_CONNECTION
+# False Positives: Enterprise monitoring agents (e.g., Datadog, Dynatrace) connecting to cloud telemetry endpoints on ephemeral ports where the CDN IP structure incidentally satisfies the formula., Peer-to-peer or torrent applications that negotiate dynamic listener ports based on tracker responses, producing sporadic formula matches., Development and test environments where internal tools communicate on dynamically assigned ports that happen to match the calculation for a given destination IP.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1568.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1568_003_DNS_Calculation_C2 {
+  meta:
+    author = "df00tech Argus"
+    description = "Detects outbound C2 connections where destination port matches APT12-style DNS calculation formula derived from destination IP octets (T1568.003)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1568.003"
+    reference = "https://attack.mitre.org/techniques/T1568/003/"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    // Filter public IPs — exclude RFC1918 and loopback
+    not re.regex($e.target.ip, `^10\.`) and
+    not re.regex($e.target.ip, `^172\.(1[6-9]|2[0-9]|3[0-1])\.`) and
+    not re.regex($e.target.ip, `^192\.168\.`) and
+    not re.regex($e.target.ip, `^127\.`) and
+    not re.regex($e.target.ip, `^169\.254\.`) and
+    $e.target.ip != ""
+    // Extract octets using regex
+    re.capture($e.target.ip, `^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.`) = $oct_raw
+    // Port range
+    $e.target.port >= 4096
+    $e.target.port <= 49151
+    // Exclude noisy legitimate ports
+    not $e.target.port in (8080, 8443, 8000, 8888, 9090, 9200, 9300, 9418, 27017, 27018, 28017)
+    // Exclude high-noise system processes
+    not $e.principal.process.file.full_path in (
+      "C:\\Windows\\System32\\svchost.exe",
+      "C:\\Windows\\System32\\lsass.exe",
+      "C:\\Windows\\System32\\services.exe",
+      "C:\\Windows\\System32\\wininit.exe"
+    )
+    // Compute oct1, oct2, oct3 using strings.coerce_to_int on captured groups
+    // Chronicle YARA-L: use re.capture for each octet separately
+    re.capture($e.target.ip, `^(\d{1,3})\.`) = $oct1_str
+    re.capture($e.target.ip, `^\d{1,3}\.(\d{1,3})\.`) = $oct2_str
+    re.capture($e.target.ip, `^\d{1,3}\.\d{1,3}\.(\d{1,3})\.`) = $oct3_str
+    // Coerce to integers
+    $oct1 = math.to_float($oct1_str)
+    $oct2 = math.to_float($oct2_str)
+    $oct3 = math.to_float($oct3_str)
+    // Calculate formulas
+    $calc_apt12 = ($oct1 * $oct2) + $oct3
+    $calc_variant = $oct1 * ($oct2 + $oct3)
+    // Match port to either formula
+    ($e.target.port = $calc_apt12 or $e.target.port = $calc_variant)
+
+  condition:
+    $e
+}

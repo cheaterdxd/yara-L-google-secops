@@ -1,0 +1,83 @@
+# T1078.003 — Local Accounts
+# Tactic: Defense Evasion, Persistence, Privilege Escalation, Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting suspicious local account abuse aligned to MITRE ATT&CK T1078.003.
+# Data Sources: Windows Security Event Log forwarded to Google Chronicle via Chronicle forwarder or BindPlane
+# Required Sources: UDM events with metadata.product_name = Microsoft-Windows-Security-Auditing
+# False Positives: Privileged Access Workstation (PAW) configurations where administrators routinely use local accounts for sensitive operations, generating frequent 4624 Type 10 events, Automated deployment pipelines creating local service accounts on newly imaged systems as part of a golden image build process, Remote monitoring and management (RMM) agents such as ConnectWise or Kaseya that authenticate using local admin credentials across endpoints
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1078.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1078_003_local_account_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious local account activity including creation, reactivation, privilege escalation, network logons, explicit credential use, and brute force patterns consistent with T1078.003."
+    mitre_attack_tactic = "Initial Access, Persistence, Privilege Escalation, Defense Evasion"
+    mitre_attack_technique = "T1078.003"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "IT provisioning scripts, config management tools, help desk remote access"
+
+  events:
+    (
+      $e.metadata.product_name = "Microsoft-Windows-Security-Auditing"
+      and $e.metadata.event_type in (
+        "USER_CREATION",
+        "USER_CHANGE_PERMISSIONS",
+        "USER_LOGIN",
+        "USER_LOGIN_FAIL",
+        "USER_UNCATEGORIZED"
+      )
+      and (
+        $e.target.user.windows_sid != /^S-1-5-21-\d+-\d+-\d+-500$/ // Not built-in Administrator by SID alone
+        or $e.metadata.product_event_type in ("4720", "4722", "4732", "4648")
+      )
+      // Local account indicator: domain matches hostname or is empty/dot
+      and (
+        $e.target.user.user_display_name != ""
+        and (
+          $e.target.administrative_domain = "."
+          or $e.target.administrative_domain = ""
+          or $e.target.administrative_domain = $e.principal.hostname
+        )
+      )
+      // Exclude built-in noisy accounts
+      and not $e.target.user.user_display_name in (
+        "ANONYMOUS LOGON", "LOCAL SERVICE", "NETWORK SERVICE",
+        "SYSTEM", "DWM-1", "DWM-2", "DWM-3", "UMFD-0", "UMFD-1"
+      )
+      // For logon events (4624), require network or remote interactive logon type and non-loopback source
+      and (
+        $e.metadata.product_event_type != "4624"
+        or (
+          $e.extensions.auth.auth_details in ("3", "10")
+          and not $e.principal.ip in ("127.0.0.1", "::1")
+        )
+      )
+    )
+
+  match:
+    $e.principal.hostname over 1h
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $target_user = $e.target.user.user_display_name
+    $event_code = $e.metadata.product_event_type
+    $source_ip = $e.principal.ip
+    $risk_score = if(
+      $e.metadata.product_event_type = "4732", 4,
+      if($e.metadata.product_event_type = "4720", 3,
+        if($e.metadata.product_event_type = "4648", 3,
+          if($e.metadata.product_event_type = "4722", 2,
+            if($e.metadata.product_event_type = "4624", 2, 1)
+          )
+        )
+      )
+    )
+
+  condition:
+    $e
+}

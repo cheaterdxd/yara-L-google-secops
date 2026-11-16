@@ -1,0 +1,50 @@
+# T1083 — File and Directory Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1083 File and Directory Discovery.
+# Data Sources: Google Chronicle UDM — Windows Endpoint telemetry, Chronicle Forwarder with Sysmon or MDE integration
+# Required Sources: process_launch UDM events
+# False Positives: Enterprise deployment orchestration tools (Puppet, Chef, SaltStack) executing PowerShell Get-ChildItem to verify file state during runs, IT operations runbooks that search for log files, temp files, or config artifacts using dir /s during routine maintenance windows, Developers using terminal emulators or IDEs that spawn cmd.exe or PowerShell with recursive find operations during build or test cycles
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1083
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1083_file_directory_discovery {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1083 File and Directory Discovery via recursive enumeration using Windows CMD, PowerShell, find.exe, or where.exe targeting sensitive paths or credential files"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1083"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|find\.exe|where\.exe)$/
+    (
+      $e.principal.process.command_line = /(?i)(dir\s|tree\s|forfiles|get-childitem|\bgci\b|get-item)/
+      or $e.principal.process.command_line = /(?i)(find\s|where\s)/
+    )
+    (
+      // Recursive flag present
+      $e.principal.process.command_line = /(?i)(\/s\b|\/S\b|-[Rr]ecurse|-r\s|--recursive|-R\s)/
+      or
+      // Credential file targeting
+      $e.principal.process.command_line = /(?i)(\.key|\.pem|\.pfx|\.p12|\.kdbx|id_rsa|authorized_keys|\.ppk|password|passwd|credential|secret|\.aws|web\.config|appsettings)/
+      or
+      // Suspicious parent
+      $e.principal.process.parent_process.file.full_path = /(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|mshta\.exe|wscript\.exe|cscript\.exe|regsvr32\.exe|rundll32\.exe|msiexec\.exe|msedge\.exe|chrome\.exe|firefox\.exe)$/
+    )
+    (
+      // Also require either sensitive path OR credential hunt to reduce noise
+      $e.principal.process.command_line = /(?i)(\\users\\|\\appdata\\|\\documents\\|\\desktop\\|\\temp\\|\\ssh\\|\.aws|\.config|inetpub|wwwroot)/
+      or
+      $e.principal.process.command_line = /(?i)(\.key|\.pem|\.pfx|\.p12|\.kdbx|id_rsa|authorized_keys|\.ppk|password|passwd|credential|secret)/
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,43 @@
+# T1102.002 — Bidirectional Communication
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that correlates PROCESS_LAUNCH events for known suspicious executables with subsequent NETWORK_CONNECTION events to known web service C2 infrastructure within a 5-minute window, grouped by host and process PID.
+# Data Sources: Chronicle UDM via Google Security Operations (endpoint telemetry with process and network event types), Chronicle UDM ingestion from EDR agents (CrowdStrike, SentinelOne, Carbon Black) forwarding PROCESS_LAUNCH and NETWORK_CONNECTION events, Chronicle UDM via Sysmon data forwarded through Chronicle forwarder
+# Required Sources: UDM events with event_type PROCESS_LAUNCH, UDM events with event_type NETWORK_CONNECTION
+# False Positives: IT operations teams running PowerShell scripts to provision or manage SharePoint Online sites and OneDrive libraries within authorized change management windows, Software developers using curl.exe or Python for legitimate GitHub API calls in automated build, test, or deployment scripts on developer workstations, RMM or endpoint management agents that spawn cmd.exe or wscript.exe subprocesses to push status information to SaaS-based ticketing platforms like Trello or Notion, Security tooling using certutil.exe for certificate chain validation and OCSP/CRL checks that also connect to graph.microsoft.com or Microsoft cloud endpoints
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1102.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1102_002_webservice_c2_bidirectional {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects suspicious processes initiating network connections to known web service C2 platforms consistent with T1102.002 Bidirectional Communication via Web Services"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1102.002"
+    severity = "HIGH"
+    confidence = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e1.metadata.event_type = "PROCESS_LAUNCH"
+    $e1.principal.process.file.full_path = /(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|python[0-9]*\.exe|pythonw\.exe|curl\.exe|wget\.exe|bitsadmin\.exe)$/
+    $e1.principal.hostname = $host
+    $e1.principal.process.pid = $pid
+
+    $e2.metadata.event_type = "NETWORK_CONNECTION"
+    $e2.principal.hostname = $host
+    $e2.principal.process.pid = $pid
+    (
+      $e2.target.hostname = /(?i)(dropbox\.com|onedrive\.live\.com|drive\.google\.com|sharepoint\.com|box\.com|pcloud\.com|graph\.microsoft\.com|pastebin\.com|paste\.ee|ghostbin\.com|hastebin\.com|gist\.github\.com|api\.github\.com|raw\.githubusercontent\.com|api\.twitter\.com|twitter\.com|t\.co|blogspot\.com|discord\.com|discordapp\.com|api\.telegram\.org|slack\.com|api\.slack\.com|notion\.so|trello\.com|wordpress\.com|mediafire\.com|yandex\.com|sites\.google\.com|technet\.microsoft\.com)/ or
+      $e2.network.http.request_url = /(?i)(dropbox\.com|onedrive\.live\.com|drive\.google\.com|sharepoint\.com|box\.com|pcloud\.com|pastebin\.com|paste\.ee|ghostbin\.com|hastebin\.com|gist\.github\.com|api\.github\.com|raw\.githubusercontent\.com|twitter\.com|t\.co|discord\.com|discordapp\.com|api\.telegram\.org|slack\.com|notion\.so|trello\.com|wordpress\.com|mediafire\.com)/
+    )
+
+  match:
+    $host, $pid over 5m
+
+  condition:
+    $e1 and $e2
+}

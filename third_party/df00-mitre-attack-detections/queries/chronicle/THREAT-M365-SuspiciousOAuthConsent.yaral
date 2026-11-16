@@ -1,0 +1,49 @@
+# THREAT-M365-SuspiciousOAuthConsent — Suspicious OAuth Application Consent Grant in Microsoft 365
+# Tactic: Credential Access, Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting illicit OAuth application consent grants in Microsoft 365 and Entra ID.
+# Data Sources: Azure Active Directory Audit Logs ingested into Chronicle via Google Cloud Log Ingestion, Microsoft 365 Unified Audit Log via Chronicle M365 ingestion, Entra ID sign-in and audit events via Chronicle Azure AD parser
+# Required Sources: azure_ad
+# False Positives: Legitimate enterprise application deployments where IT administrators intentionally consent to broad permissions for approved internal or third-party SaaS tools including CASB, archiving, and eDiscovery platforms, Automated CI/CD pipeline service principal grants for DevOps tooling accessing SharePoint Online or Exchange Online as part of infrastructure automation, Microsoft-published first-party applications such as Teams, Viva, or Microsoft 365 Copilot receiving admin consent during new feature activation or license expansion events
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-M365-SuspiciousOAuthConsent
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule suspicious_oauth_consent_grant_m365 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects illicit OAuth consent grants with sensitive API permissions in Microsoft 365 / Entra ID — covers Storm-0558 and Midnight Blizzard consent phishing"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1098.003"
+    false_positives = "Legitimate IT-sanctioned app deployments, ISV onboarding, Microsoft first-party app consent"
+    reference = "https://www.microsoft.com/security/blog/2023/09/07/microsoft-mitigates-china-based-threat-actor-storm-0558"
+
+  events:
+    $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+    $e.metadata.product_name = "Azure Active Directory"
+    $e.metadata.product_event_type in nocase (
+      "Consent to application",
+      "Add delegated permission grant",
+      "Add OAuth2PermissionGrant",
+      "Add app role assignment to service principal"
+    )
+    $e.security_result.action = "ALLOW"
+    (
+      re.regex(
+        $e.target.resource.attribute.labels["permissions"],
+        `(?i)(Mail\.Read|Mail\.ReadWrite|Mail\.Send|Mail\.ReadBasic\.All|Files\.Read\.All|Files\.ReadWrite\.All|offline_access|Directory\.Read\.All|User\.Read\.All|User\.ReadWrite\.All|Contacts\.Read|Contacts\.ReadWrite|Sites\.Read\.All|Sites\.ReadWrite\.All|MailboxSettings\.ReadWrite|Calendars\.ReadWrite|Group\.Read\.All)`
+      ) or
+      re.regex($e.metadata.product_event_type, `(?i)admin\s+consent`) or
+      $e.metadata.product_event_type = "Add app role assignment to service principal"
+    )
+    $user = $e.principal.user.email_addresses[0]
+    $app = $e.target.application
+    $src_ip = $e.principal.ip
+
+  condition:
+    $e
+}

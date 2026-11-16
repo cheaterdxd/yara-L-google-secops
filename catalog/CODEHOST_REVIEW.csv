@@ -1,0 +1,72 @@
+host,query,reported_results,reviewed,decision,notes
+GitHub,"YARA-L detection rules",19,19,reviewed,Results were indexed sources or tools/study repos; no additional licensed rule repo found
+GitHub,"YARA-L Chronicle rules",15,15,reviewed,Results were indexed/excluded candidates already recorded in catalog
+GitHub,"Google Chronicle YARA-L detection rules",10,10,reviewed,Results were indexed/excluded candidates already recorded in catalog
+GitHub,"YARA-L Google SecOps rules",21,21,reviewed,Results were indexed/excluded candidates already recorded in catalog
+GitLab,"YARA-L",1,1,excluded,owlsecx/OBinwalk is a YARA-like file/signature tool not Google SecOps YARA-L
+GitLab,"YARAL",4,4,excluded,Names refer to unrelated projects/not the Google SecOps detection language
+GitLab,"Google Chronicle YARA-L",0,0,reviewed,No GitLab projects returned
+GitLab,"Google SecOps rules",0,0,reviewed,No GitLab projects returned
+Codeberg,"YARA-L",unknown,0,blocked,Public API returned HTTP 429 Too Many Requests
+Codeberg,"Google Chronicle",unknown,0,blocked,Public API returned HTTP 429 Too Many Requests
+Codeberg,"Google SecOps",unknown,0,blocked,Public API returned HTTP 429 Too Many Requests
+Web search,"YARA-L GitHub detection repositories excluding indexed projects",multiple,reviewed,reviewed,Results repeated known indexed repos or returned general YARA documentation; no additional snapshot candidate confirmed
+Web search,"YARA-L GitLab Bitbucket Codeberg Chronicle rules",multiple,reviewed,reviewed,GitLab searches found no additional Google SecOps rule corpus; Codeberg API rate-limited; Bitbucket search returned unrelated content
+Third-party index,detections.org/sources/,16 rulesets listed,1 YARA-L source,reviewed,Chronicle detection-rules is the only YARA-L ruleset in this index; index is curated and does not claim all internet sources
+GitHub API,"YARA-L detection rules",19,19,reviewed,All returned repositories were already indexed/excluded or non-rule tooling
+GitHub API,"YARA-L Chronicle rules",15,15,reviewed,Results matched existing sources/candidates; no eligible new repo found
+GitHub API,"Google Chronicle YARA-L detection rules",10,10,reviewed,Results matched existing sources/candidates; no eligible new repo found
+GitHub API,"YARA-L Google SecOps rules",21,21,reviewed,Results matched existing sources/candidates; no eligible new repo found
+GitLab API,"YARA-L",1,1,reviewed,Only owlsecx/OBinwalk returned; it is a YARA-like file-signature tool, not YARA-L
+GitLab API,"Chronicle YARA-L",0,0,reviewed,No projects returned
+GitLab API,"Google SecOps detection rules",0,0,reviewed,No projects returned
+GitHub API,"YARA-L GCP detection rules",2,2,reviewed,Results were an indexed portfolio rule and an unlicensed study guide with no .yaral files
+GitHub API,"Google SecOps YARA-L rule pack",0,0,reviewed,No repositories returned
+GitHub API,"YARA-L detection rules public",19,19,reviewed,All results were existing indexed/excluded sources or non-rule tooling/study projects
+GitHub API,"YARA-L GCP Chronicle rules",0,0,reviewed,No new repository results in targeted query
+GitHub API,"YARA-L Google SecOps detection",19,19,reviewed,All rule repositories returned were already indexed or already recorded in exclusions; remaining hits were tooling/training
+GitHub API,"Google Chronicle YARA-L custom detection",0,0,reviewed,No repository results in targeted query
+Web search,"YARA-L GCP public repositories",multiple,reviewed,reviewed,Results were existing index sources or article/forum examples already in LINK_ONLY_RULES.csv; no new rule repository confirmed
+GitHub API,"ajaynyayapathi/yara-l-skill tree at main",b84db2b73384a5622abfc2ff5a542f6bf060cf58,reviewed,reviewed,"Upstream HEAD matches indexed commit; tree contains the same four already-indexed .yaral examples and newly visible synthetic parser fixtures/checker, all fixtures marked verified_against_tenant=false; no additional rule file eligible for corpus snapshot"
+GitHub API,"Daniel-Andrawis/detection-llm-misuse tree at main",daaad2b720feeeb4f20435681b647be76d0f855a,reviewed,reviewed,"Upstream HEAD matches indexed commit; same three MIT-licensed YARA-L rules already indexed; remaining changes are documentation/metadata comments, so no new rule snapshot required"
+GitHub API,"Contrast-Security-OSS/google-security-operations tree at main",71b7a25f8b4c5ed27b9edb7178f61d87f0f852d7,reviewed,excluded,"Confirmed five .yaral files; repository has no declared license, so retain link-only per redistribution policy; commit matches existing EXCLUDED_SOURCES.csv record"
+Web search,"GCP Google SecOps YARA-L rule packs and rule examples",multiple,reviewed,reviewed,"Search results resolved to indexed projects or two article/community examples; recorded the CSOH tutorial and GCP IAM/Data Tables article as link-only because no explicit rule redistribution license was identified; no additional licensed repository confirmed"
+GitHub API,"YARA-L 2.0 rules",7,7,reviewed,"All seven repository results matched indexed sources or previously reviewed candidates; no new eligible repository"
+GitHub API,"Google SecOps detection rules yaral",1,1,reviewed,"Single result was previously indexed yagneswar-cyber/google-chronicle-yaral-rules, which has no declared license"
+GitHub API,"GCP YARA-L rules",2,2,reviewed,"aloc999 portfolio source already indexed; sifatnotes study guide has README only, no rule files/license and is recorded link-only"
+GitHub API,"YARA-L Google Chronicle detection",12,12,reviewed,"Found Apache-2.0 lopes/graft with five Google SecOps custom YAML rules and confirmed its current commit/tree; found gauthamrajendranp corpus with 46 extensionless rule-like files but no license, recorded link-only; remaining results indexed/excluded"
+GitHub API,"yaral SIEM rules",0,0,reviewed,"No repository results"
+GitHub API,"chronicle detection rules GCP cloud audit",0,0,reviewed,"No repository results"
+GitHub API,"google-secops YARA-L GCP",1,1,reviewed,"Result was the already recorded sifatnotes study-guide repo; README-only and no license"
+GitHub API,"gauthamrajendranp/YARA-L-detection-rules-Google-Chronicle tree",b0632a6d65679215db5ba0f43e1fb56d102273b5,reviewed,excluded,"Confirmed 46 extensionless rule-like files and GCP examples; no declared license in repository metadata or LICENSE file; recorded link-only"
+GitHub API,"YARA-L detection rules Google SecOps",12,12,reviewed,"Results were existing indexed sources, prior link-only repos, or tool/training projects; no new licensed rule corpus confirmed"
+GitHub API,"YARA-L rules Chronicle cloud",0,0,reviewed,"No repository results"
+GitHub API,"YARA-L GCP cloud audit detection rules",0,0,reviewed,"No repository results"
+GitHub API,"Google Chronicle custom rules YARA-L SecOps",0,0,reviewed,"No repository results"
+GitHub API,"shahoahmed/clickfix-detection-portability-lab tree",4a736219724224fc07d0988c1edc5c68670afff6,reviewed,excluded,"Rechecked tree: two actual .yaral rules in rules/yara-l, but no declared license; retain link-only. Did not run simulation script or copy non-YARA-L files"
+Third-party source index,"detections.org/sources/ checked 2026-11-16",1 YARA-L ruleset,reviewed,reviewed,"The index lists chronicle/detection-rules as its sole YARA-L ruleset (410 rules); it is a curated index, not an exhaustive proof of public internet coverage; all GCP examples found point to the already-indexed upstream corpus"
+GitHub API,"GooGKush/secops-risk-analytics tree",bd02b2fff6321e53442d97aa668d5622eb1d2151,reviewed,snapshot,"Confirmed Apache-2.0 LICENSE and two YARA-L metrics examples under examples/; snapshot only those two rule files, excluding skill docs/validator. Static examples are not tenant/compiler verified."
+GitHub API,"hzmndt/secops-gti-ioc-guide-and-rules",404,reviewed,not_found,"Search result referenced a repository, but GitHub API returned 404 for the repository/commit/tree; no content or license could be verified, so nothing copied."
+GitHub API,"google/skills secops-detection-engineering guardrails",9883ee73e4b221a9ac43a47af2549c63c4c5ca54,reviewed,knowledge_snapshot,"Confirmed Apache-2.0 repo and guardrails Markdown with four embedded reference blueprints; snapshot only the knowledge reference, not standalone rules. Upstream still requires remote validate_rule/tenant checks."
+Official documentation,"Google SecOps metrics functions",https://docs.cloud.google.com/chronicle/docs/detection/metrics-functions,reviewed,knowledge_reference,"Official Risk Analytics/YARA-L metrics reference rechecked; confirms metrics.* is outcome-only and metric rules are treated as multi-event. No new repository rule artifact discovered."
+GitHub API,"AttackIQ/pySigma-backend-secops",15542480c78509cb10c767a6aff921169d39211a,reviewed,tooling_only,"LGPL-3.0 backend contains Sigma conversion code, UDM schema and tests but no independent YARA-L detection-rule corpus; no rule snapshot"
+GitHub API,"seanthegeek/pygments-lexer-yara-l",b426e5da3712cd7fbc4c38fa4b8af45e3ddbc1c4,reviewed,tooling_only,"MIT syntax-highlighting lexer; tree is package/tooling, not detection rules; no snapshot"
+GitHub API,"gromerosec/google-secops-rule-export",1d1187c138a5aa9ecbbc088cf1e82bc12cc685be,reviewed,tooling_only,"MIT read-only tenant export utility; no public rule corpus in tree; no tenant credentials/access used"
+GitHub API,"sp4ir/detection-codex tree",afd4fed7db254fd847a6c9b2fcec6b8e004153fa,reviewed,link_only,"Tree contains Chronicle/YARA-L documentation and a detection factory but no standalone .yaral corpus; no declared license; no content copied"
+GitHub API,"dandye/googleSandy-secops-skills tree",72503a21482c1c32062af733c651b87f0c8e539b,reviewed,link_only,"Fork contains SecOps skill documentation but no standalone detection-rule corpus and no declared license; no content copied"
+GitHub API,"sifatnotes/Google-Cloud-Professional-Security-Operations-Engineer-Study-Guide-Notes-2026- tree",2461b9b719564a4f5f82d6f5bae0eb65fbfe7bf2,reviewed,link_only,"Tree contains README.md only; no rule files or declared license, so recorded as study-guide link-only"
+GitHub API,"kelvinodarikpe88/portfolio-secops-detections tree",1d85050e25fbae04293b7c21bedf0af9835e473d,reviewed,snapshot,"Confirmed MIT LICENSE and four standalone Chronicle .yaral files under detections/chronicle; snapshot with portfolio/lab and non-tenant-validated caveat"
+GitHub API,"abhiiibabariya-dev/sigma-rule-converter tree",ce24e2538ea7d07ff9e8c2b56b8c59453aa285e9,reviewed,tooling_only,"MIT Sigma converter includes sample Sigma YAML and generated Chronicle backend code, not an independent YARA-L detection corpus; no snapshot"
+GitHub API,"ajaynyayapathi/ATR-to-Yara-L-Converter tree",919619ce152df52361c337f3346e228af7e10123,reviewed,tooling_only,"MIT converter contains ATR fixtures/tests but no standalone generated YARA-L rule corpus; no snapshot"
+GitHub API,"kelvinodarikpe88/cti-threat-hunting-simulation tree",9815b3fc3282f4b21977ae7d1f4e8b6fa5f176cd,reviewed,link_only,"Confirmed one rules/yara_l/sample_detection.yaral but no declared license; no rule text copied"
+GitHub API,"kiran-puvvada/chronicle-pulse-secops-workbench tree",704703703d9e8786983ba211c18c3ad9416fcd24,reviewed,link_only,"Confirmed eight secops-rules/*.yaral files but no declared license; no rule text or threat-intel data copied"
+GitHub API,"Google SecOps YARA-L rule created after 2026-01-01",16,16,reviewed,"Results were indexed skills/tools, prior link-only repositories, the newly reviewed MIT portfolio source, or non-rule study material; no additional eligible licensed corpus"
+GitHub API,"Chronicle YARA-L detection created after 2026-01-01",11,11,reviewed,"Results were indexed/excluded candidates, lopes/graft, or workbench/tooling; no additional eligible licensed corpus"
+GitHub API,"GCP_CLOUDAUDIT YARA-L",0,0,reviewed,"No repository results"
+GitHub API,"hunternotes/YARA-L tree",726dcc8451b4086addb2753d4d73616749da65e7,reviewed,snapshot,"Confirmed MIT LICENSE and one YARA-L rule in AgentTesla.yar; snapshot preserved with upstream path/commit"
+GitHub API,"efi-k/yara-l-resources tree",4a17842f987ff846a4aa56653cd517ce2e6f3a18,reviewed,link_only,"Tree contains only yara-l.txt resource URLs, no standalone rules or declared license; no content copied"
+GitHub API,"rapture2367/YARA-L-STUDIO",unknown,reviewed,tooling_only,"Repository is an IDE/studio candidate with no declared license in search metadata; no rule corpus snapshot"
+GitHub API,"SIMKRA242/YARA100days tree",c8ba0a115914550af5a5e5b23e5a4a5761dc6fdd,reviewed,link_only,"Confirmed two extensionless YARA-L-looking files; no declared license, so no content copied"
+GitHub API,"MatheusDamacena/secops-quest tree",b861b60b81d4cb96d7af41306474ed2fb1181aba,reviewed,tooling_only,"Educational app tree has no standalone YARA-L rule files and no declared license; no content copied"
+GitHub API,"YARA-L in:name",344,"page 1 triaged",reviewed,"Repository-name search returned 344 results, dominated by classic YARA, language tooling, study apps, already-indexed sources, and excluded candidates; only page 1 was triaged in this pass, so this is discovery evidence, not exhaustive review"
+GitHub API,"Google SecOps in:description YARA",73,"page 1 triaged",reviewed,"Description search returned 73 results; page 1 contained indexed/excluded sources, tooling, and study projects; no additional licensed rule corpus confirmed in the reviewed page"

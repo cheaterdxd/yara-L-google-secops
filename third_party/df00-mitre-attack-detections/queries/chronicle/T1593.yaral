@@ -1,0 +1,27 @@
+# T1593 — Search Open Websites/Domains
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule for Search Open Websites/Domains (T1593).
+# Data Sources: Google Chronicle SIEM, Chronicle UDM
+# Required Sources: NETWORK_HTTP, NETWORK_CONNECTION
+# False Positives: Legitimate commercial web crawlers and search engine bots (Googlebot, Bingbot, DuckDuckGo) may match known user agent patterns — whitelist verified crawler IP ranges from respective ASNs, Security vendors running authorized external attack surface scans (Qualys, Tenable, Rapid7) will produce reconnaissance-like patterns — maintain an allowlist of authorized scanner IPs, Developers or internal teams using curl, Python requests, or httpx for legitimate API testing or load testing against production endpoints, Content delivery networks and uptime monitoring services (Pingdom, UptimeRobot, StatusCake) making frequent automated HEAD/GET requests
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1593
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1593_search_open_websites_domains {
+  meta:
+    author = "df00tech"
+    description = "Detects Search Open Websites/Domains (T1593)"
+    mitre_attack_tactic = "TA0043"
+    mitre_attack_technique = "T1593"
+    confidence = "low"
+    severity = "medium"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.principal.ip != ""
+  condition:
+    $e
+}

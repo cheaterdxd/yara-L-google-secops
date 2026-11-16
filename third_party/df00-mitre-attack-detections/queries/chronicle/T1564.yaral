@@ -1,0 +1,72 @@
+# T1564 — Hide Artifacts
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1564 Hide Artifacts multi-signal detection.
+# Data Sources: Google Chronicle SIEM, Windows Endpoint Detection (via Chronicle Forwarder), Microsoft Defender for Endpoint (via Chronicle integration), Sysmon via Chronicle Windows Event ingestion
+# Required Sources: UDM Events (process_launch, registry_modification), Chronicle Unified Data Model
+# False Positives: Enterprise configuration management using Group Policy or Intune that runs scripts with hidden window flags during system configuration and compliance enforcement, Legitimate system hardening scripts that use icacls.exe to restrict access on sensitive directories such as credential stores or certificate private key folders, Third-party software products that legitimately delete or recreate scheduled task SD values during updates or reconfiguration procedures
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1564_HideArtifacts_MultiSignal {
+  meta:
+    name = "T1564 - Hide Artifacts Multi-Signal Detection"
+    description = "Detects multiple artifact hiding techniques: attrib +h/+s, NTFS ADS creation, hidden window execution, file access denial, and Tarrask scheduled task SD deletion"
+    author = "Argus Detection Engineering"
+    mitre_attack = "T1564"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    (
+      // Signal 1: attrib.exe setting hidden/system attributes
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i).*\\attrib\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i).*\+[hs].*`)
+      )
+      or
+      // Signal 2: NTFS Alternate Data Streams via shell
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i).*\\(cmd|powershell|pwsh)\.exe$`)
+        and (
+          re.regex($e.target.process.command_line, `>[^:]+:[^\\/:\*\?"<>|\s]+`)
+          or (
+            re.regex($e.target.process.command_line, `(?i)(Set-Content|Out-File)`)
+            and re.regex($e.target.process.command_line, `:[^\\]+`)
+          )
+        )
+      )
+      or
+      // Signal 3: Hidden window execution flags
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.command_line, `(?i)(-WindowStyle\s+[Hh]|-w\s+hidden|SW_HIDE|\/\/[Bb]\s)`)
+        and not re.regex($e.target.process.file.full_path, `(?i).*\\(explorer|msiexec|svchost)\.exe$`)
+      )
+      or
+      // Signal 4: icacls/cacls used to deny access
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i).*\\(icacls|cacls)\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)/deny\s+(Everyone|\*S-1-1-0|Users|\*S-1-5-32-545)`)
+      )
+      or
+      // Signal 5: Scheduled task SD registry deletion (Tarrask)
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION"
+        and re.regex($e.target.registry.registry_key, `(?i).*\\Schedule\\TaskCache\\Tree\\.*`)
+        and $e.target.registry.registry_value_name = "SD"
+        and $e.metadata.event_subtype = "REGISTRY_DELETION"
+      )
+    )
+
+  condition:
+    $e
+}

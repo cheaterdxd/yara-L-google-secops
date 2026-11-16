@@ -1,0 +1,29 @@
+# T1608.004 — Drive-by Target
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1608.004 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Web Proxy, Google Workspace
+# Required Sources: NETWORK_HTTP, PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Browser extensions or plugins that legitimately spawn helper processes — e.g., PDF readers (AcroRd32.exe), video codec installers, accessibility tools launched via browser, Legitimate software update mechanisms triggered through the browser — Chrome or Firefox update pipelines may invoke msiexec.exe or cmd.exe to apply updates, Developer workflows using browser-based IDEs, build tools, or debugging extensions that spawn local script interpreters or Node.js processes, Enterprise protocol handlers (custom URI schemes such as myapp://) that allow browsers to launch registered desktop applications or scripts, Download managers integrated with browsers that save executable files to standard temp directories before user-initiated installation
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1608.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_stage_capabilities {
+  meta:
+    author = "Argus"
+    description = "Detects staging of capabilities from external infrastructure"
+    severity = "HIGH"
+    technique = "T1608"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    (
+      re.regex($e.target.url, `\.(exe|dll|bin|ps1|bat|vbs|hta|sh|elf)($|\?)`) nocase or
+      re.regex($e.target.hostname, `transfer\.sh|paste\.ee|gofile\.io|anonfiles|temp\.sh`) nocase
+    )
+    $e.principal.process.file.full_path != ""
+  condition:
+    $e
+}

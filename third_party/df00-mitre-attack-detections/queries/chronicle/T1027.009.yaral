@@ -1,0 +1,40 @@
+# T1027.009 — Embedded Payloads
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1027.009 Embedded Payloads with two independent UDM detection branches matched via OR in the condition: (1) PROCESS_LAUNCH events where certutil.exe is invoked with -decode or -urlcache against a binary file extension; (2) FILE_CREATION events where an executable is written to disk by a known document-handling or script host process.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM (Unified Data Model), Windows Endpoint telemetry via Chronicle Bindplane or native feed ingestion
+# Required Sources: UDM normalized events: PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Legitimate certutil.exe usage by system administrators to decode base64-encoded certificate blobs or download CRL files with .bin extensions from internal enterprise PKI distribution points, Microsoft Office template or add-in initialization workflows that write helper executables or COM surrogate DLLs to the user's AppData directory during first-run or update processing, Script-based software packaging tools (wscript.exe or cscript.exe driven VBScript installers) that extract application binaries from self-extracting archive scripts as part of a sanctioned deployment procedure
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_009_embedded_payloads {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1027.009 - Embedded Payloads: certutil decode/urlcache targeting executables or binary file creation by document and script host processes"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.009"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($proc.target.process.file.full_path, `(?i)certutil\.exe$`)
+    re.regex($proc.target.process.command_line, `(?i)-(decode|urlcache)`)
+    re.regex($proc.target.process.command_line, `(?i)\.(exe|dll|bin|dat|cfg)`)
+    $proc_host = $proc.principal.hostname
+
+    $drop.metadata.event_type = "FILE_CREATION"
+    re.regex($drop.target.file.full_path, `(?i)\.(exe|dll|bin|shellcode)$`)
+    re.regex(
+      $drop.principal.process.file.full_path,
+      `(?i)(WINWORD|EXCEL|POWERPNT|AcroRd32|FoxitPDFReader|wscript|cscript|mshta)\.exe$`
+    )
+    $drop_host = $drop.principal.hostname
+
+  condition:
+    $proc or $drop
+}

@@ -1,0 +1,55 @@
+# T1014 — Rootkit
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1014 Rootkit TTPs across three independent event variables ORed in the condition: (1) Windows kernel driver service registration from suspicious staging paths mapped via product_event_type 4697/7045, (2) Linux kernel module loading by insmod/modprobe where the parent process is not a recognized package manager, and (3) /etc/ld.so.preload file modification used by Rocke, Umbreon, and Ebury for userland rootkit shared library injection.
+# Data Sources: Google Chronicle UDM event stream, Windows event log ingestion via Chronicle forwarder (event_type STATUS_UPDATE for 4697/7045), Linux auditd or EDR endpoint agent forwarded to Chronicle (event_type PROCESS_LAUNCH, FILE_MODIFICATION), Microsoft Defender for Endpoint or CrowdStrike Falcon via Chronicle connector
+# Required Sources: UDM events with metadata.event_type = STATUS_UPDATE and metadata.product_event_type in (4697, 7045), UDM events with metadata.event_type = PROCESS_LAUNCH for insmod/modprobe, UDM events with metadata.event_type = FILE_MODIFICATION for /etc/ld.so.preload
+# False Positives: Legitimate enterprise software deployments (VPN clients such as Cisco AnyConnect or Palo Alto GlobalProtect, backup agents such as Veeam or Commvault) that register Windows kernel mode drivers via sc.exe from installation paths that include ProgramData subdirectories not covered by the standard allowlist, Linux infrastructure agents (Datadog, New Relic, Dynatrace, Falco) loading eBPF helper kernel modules using insmod or modprobe where the parent is a Python or Go binary rather than a package manager — these are common in containerized and cloud-native environments, Authorized red team or penetration testing exercises simulating rootkit installation on designated test hosts within the Chronicle-monitored environment that have not been excluded from the rule scope via hostname allowlist
+# Confidence: medium  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1014
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1014_rootkit_multi_signal {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "T1014 Rootkit: detects kernel driver installation from suspicious paths, Linux LKM loading outside package manager context, and /etc/ld.so.preload modification. Covers Drovorub, Skidmap, Diamorphine, Rocke, Umbreon, and Ebury TTPs."
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1014"
+    reference = "https://attack.mitre.org/techniques/T1014/"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    /* Signal 1: Windows kernel driver service installation from suspicious staging path
+       Maps to Security Event 4697 or System Event 7045 ingested into UDM as STATUS_UPDATE */
+    $win_driver.metadata.event_type = "STATUS_UPDATE"
+    $win_driver.metadata.product_event_type = /^(4697|7045)$/
+    re.regex(
+      $win_driver.target.resource.name,
+      `(?i)(\\temp\\|\\appdata\\|\\downloads\\|\\programdata\\|\\users\\public\\)`
+    )
+    $win_driver.principal.hostname = $host1
+
+    /* Signal 2: Linux kernel module loaded via insmod or modprobe
+       outside a recognized package manager parent process */
+    $lkm_load.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($lkm_load.target.process.file.full_path, `/(insmod|modprobe)$`)
+    not re.regex(
+      $lkm_load.principal.process.file.full_path,
+      `(systemd|apt-get|apt|dpkg|rpm|yum|dnf|snap|pacman|zypper|kmod|dracut|update.initramfs)`
+    )
+    $lkm_load.principal.hostname = $host2
+
+    /* Signal 3: Modification or creation of /etc/ld.so.preload
+       used by userland rootkits (Rocke, Umbreon, Ebury) to inject shared libraries */
+    $ld_preload.metadata.event_type = "FILE_MODIFICATION"
+    $ld_preload.target.file.full_path = "/etc/ld.so.preload"
+    $ld_preload.principal.hostname = $host3
+
+  condition:
+    $win_driver or $lkm_load or $ld_preload
+}

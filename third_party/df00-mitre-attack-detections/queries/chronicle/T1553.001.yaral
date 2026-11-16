@@ -1,0 +1,63 @@
+# T1553.001 — Gatekeeper Bypass
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting macOS Gatekeeper bypass using PROCESS_LAUNCH and FILE_MODIFICATION UDM events.
+# Data Sources: Chronicle UDM PROCESS_LAUNCH events from macOS endpoints, Chronicle UDM FILE_MODIFICATION events, CrowdStrike Falcon, Carbon Black, or SentinelOne macOS telemetry forwarded to Chronicle via ingestion API
+# Required Sources: UDM entity type: PROCESS_LAUNCH, UDM entity type: FILE_MODIFICATION
+# False Positives: Software distribution pipelines using Autopkg, Munki, or similar open-source deployment tools automatically remove quarantine attributes during package preparation and managed software distribution workflows, Apple's own developer toolchain (Xcode, codesign, notarytool, altool) calls spctl for assessment and policy verification during the code signing and App Store notarization workflow, Endpoint detection and response agents from Objective-See, commercial EDR vendors, and Apple's own Endpoint Security Framework may use DYLD-based interposition internally during their sensor initialization or install phase
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1553.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1553_001_Gatekeeper_Bypass {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects macOS Gatekeeper bypass via xattr quarantine removal, spctl policy modification, DYLD library injection, or unauthorized quarantine database access"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1553.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platform = "macOS"
+
+  events:
+    (
+      $proc.metadata.event_type = "PROCESS_LAUNCH"
+      $proc.principal.platform = "MAC"
+      (
+        (
+          re.regex($proc.target.process.file.full_path, `xattr$`) and
+          (
+            re.regex($proc.target.process.command_line, `-d com\.apple\.quarantine`) or
+            re.regex($proc.target.process.command_line, `--delete com\.apple\.quarantine`) or
+            re.regex($proc.target.process.command_line, `xattr -c `) or
+            re.regex($proc.target.process.command_line, `xattr -(dr|r) `)
+          )
+        ) or
+        (
+          re.regex($proc.target.process.file.full_path, `spctl$`) and
+          (
+            re.regex($proc.target.process.command_line, `--add`) or
+            re.regex($proc.target.process.command_line, `--enable`) or
+            re.regex($proc.target.process.command_line, `--master-disable`) or
+            re.regex($proc.target.process.command_line, `--global-disable`)
+          )
+        ) or
+        (
+          re.regex($proc.target.process.command_line, `DYLD_INSERT_LIBRARIES`) or
+          re.regex($proc.target.process.command_line, `DYLD_FRAMEWORK_PATH`) or
+          re.regex($proc.target.process.command_line, `DYLD_LIBRARY_PATH`)
+        )
+      )
+    ) or
+    (
+      $file.metadata.event_type = "FILE_MODIFICATION"
+      $file.principal.platform = "MAC"
+      re.regex($file.target.file.full_path, `QuarantineEventsV2`)
+      not re.regex($file.principal.process.file.full_path, `(launchservicesd|tccd|lsd)$`)
+    )
+
+  condition:
+    $proc or $file
+}

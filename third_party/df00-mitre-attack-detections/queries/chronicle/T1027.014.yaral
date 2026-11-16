@@ -1,0 +1,54 @@
+# T1027.014 — Polymorphic Code
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule correlating FILE_CREATION events for PE files in writable directories with PROCESS_LAUNCH from those same directories, requiring at least 3 file write events with distinct SHA256 hashes from the same parent process over a 1-hour window — characteristic of polymorphic malware mutation and re-execution cycles.
+# Data Sources: Chronicle SIEM, Google Security Operations
+# Required Sources: udm.events
+# False Positives: Legitimate browser update processes excluded by name may still trigger if new browser binaries are not in the exclusion list, Software development environments writing and executing multiple build artifacts from temp directories, Virtualization or container management software unpacking runtime components to writable paths
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.014
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule polymorphic_code_multi_pe_write {
+  meta:
+    author = "argus-v1"
+    description = "Detects polymorphic malware writing multiple uniquely-hashed PE files to writable directories then executing from those paths"
+    severity = "HIGH"
+    mitre_attack_technique = "T1027.014"
+    mitre_attack_tactic = "TA0005"
+
+  events:
+    $write.metadata.event_type = "FILE_CREATION"
+    $write.target.file.mime_type = "application/x-dosexec"
+    (
+      $write.target.file.full_path = /(?i)\\temp\\/ or
+      $write.target.file.full_path = /(?i)\\appdata\\/ or
+      $write.target.file.full_path = /(?i)\\programdata\\/ or
+      $write.target.file.full_path = /(?i)\\users\\public\\/
+    )
+    $write.principal.process.file.full_path = $parent_proc
+    $write.principal.hostname = $host
+    $write.target.file.sha256 = $hash1
+
+    $exec.metadata.event_type = "PROCESS_LAUNCH"
+    $exec.principal.hostname = $host
+    (
+      $exec.target.process.file.full_path = /(?i)\\temp\\/ or
+      $exec.target.process.file.full_path = /(?i)\\appdata\\/ or
+      $exec.target.process.file.full_path = /(?i)\\programdata\\/
+    )
+    not $exec.target.process.file.full_path = /(?i)(chrome|firefox|msedge|teams|onedrive)\.(exe)$/
+
+  match:
+    $host, $parent_proc over 1h
+
+  outcome:
+    $risk_score = max(75)
+    $files_written = count($write.target.file.full_path)
+    $unique_hashes = count_distinct($write.target.file.sha256)
+
+  condition:
+    #write >= 3 and $exec and $unique_hashes >= 3
+}

@@ -1,0 +1,69 @@
+# T1001.002 — Steganography
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules: the first detects known steganography tool execution and command-line indicators including PowerShell LSB manipulation and certutil encoding; the second detects image file creation by known LOLBins.
+# Data Sources: Google Chronicle UDM (Windows Endpoint), Chronicle Forwarder with Sysmon, Chronicle Forwarder with CrowdStrike Falcon
+# Required Sources: PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Legitimate forensic analysts using steganography tools for authorized digital investigations, Red team operators using authorized steganographic C2 channels during an engagement, Developers building image processing tools that use pixel-manipulation APIs, Automated build pipelines writing image assets via scripting tools like PowerShell, Security researchers analyzing steganographic malware in sandboxed environments
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1001.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1001_002_steganography_tool_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects steganography tool execution and data embedding techniques per MITRE ATT&CK T1001.002"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1001.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+
+  events:
+    // Event variable for process execution
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+
+    // Match known steganography tools by process name or command line
+    (
+      re.regex($e.principal.process.file.full_path, `(?i)(steghide|outguess|stegdetect|openstego|silenteye|stegosuite|snow\.exe|jphide|jpseek|camouflage)`)
+      or re.regex($e.principal.process.command_line, `(?i)(steghide|outguess|openstego|invoke-psimage|invoke-steganography|lockbits|getpixel|setpixel|bitmapimage|idat)`)
+      or (
+        re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|python\.exe|python3)`)
+        and re.regex($e.principal.process.command_line, `(?i)(lsb|steganograph|lockbits|getpixel|setpixel|bitmapimage|idat)`)
+      )
+      or (
+        re.regex($e.principal.process.file.full_path, `(?i)certutil\.exe`)
+        and re.regex($e.principal.process.command_line, `(?i)(-encode|-decode)`)
+        and re.regex($e.principal.process.command_line, `(?i)\.(jpg|jpeg|png|gif|bmp)`)
+      )
+      or re.regex($e.principal.process.command_line, `(?i)copy\s.*/[bB].*\.(jpg|jpeg|png|gif|bmp)|copy.*\.(jpg|jpeg|png|gif|bmp).*/[bB]`)
+    )
+
+  condition:
+    $e
+}
+
+rule t1001_002_suspicious_image_file_write {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious image file writes by LOLBins that may indicate steganographic data embedding (T1001.002)"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1001.002"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+
+    // Image file extension
+    re.regex($e.target.file.full_path, `(?i)\.(jpg|jpeg|png|gif|bmp|tiff|webp)$`)
+
+    // Written by known LOLBins
+    re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|curl\.exe|wget\.exe)`)
+
+  condition:
+    $e
+}

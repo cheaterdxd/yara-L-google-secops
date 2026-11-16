@@ -1,0 +1,56 @@
+# T1531 — Account Access Removal
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1531 Account Access Removal using UDM event types USER_DELETION, USER_ACCOUNT_DISABLED, USER_CHANGE_PASSWORD, USER_ACCOUNT_LOCKED, and PROCESS_LAUNCH with regex matching on account manipulation command lines.
+# Data Sources: Google Chronicle UDM (Windows Security Event Log via Chronicle forwarder or Bindplane), Chronicle Endpoint telemetry (CrowdStrike Falcon, Microsoft Defender, Carbon Black), Chronicle Linux syslog / auditd ingestion
+# Required Sources: UDM events normalized to USER_DELETION, USER_ACCOUNT_DISABLED, USER_CHANGE_PASSWORD, USER_ACCOUNT_LOCKED, PROCESS_LAUNCH
+# False Positives: Authorized Active Directory lifecycle automation via PowerShell DSC, Azure AD Connect sync, or HR system integrations (Workday, BambooHR) that propagate account state changes — these generate USER_ACCOUNT_DISABLED events at scale during organizational changes and may require principal.application filtering, Chronicle UDM normalization may map routine end-user self-service password changes through identity providers (Okta, Azure AD SSPR) to USER_CHANGE_PASSWORD — consider adding not $e.principal.application = "SelfServicePasswordReset" to reduce noise, Privileged access management platforms (CyberArk, BeyondTrust) performing scheduled credential rotation for service accounts will generate USER_CHANGE_PASSWORD events — correlate $host against a Chronicle reference list of known PAM server hostnames to suppress
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1531
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1531_account_access_removal {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1531 Account Access Removal via account deletion, disabling, lockout, or credential manipulation. Ransomware families LockerGoga, MegaCortex, and Akira use this technique to impede IR before encryption. LAPSUS$ removed global admin accounts to lock organizations out entirely."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1531"
+    false_positives = "Authorized IT account lifecycle management, deprovisioning automation, PAM credential rotation"
+    version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "USER_DELETION" or
+      $e.metadata.event_type = "USER_ACCOUNT_DISABLED" or
+      $e.metadata.event_type = "USER_CHANGE_PASSWORD" or
+      $e.metadata.event_type = "USER_ACCOUNT_LOCKED" or
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex(
+          $e.target.process.command_line,
+          `(?i)(net[\s]+user[\s\S]+/del|Set-LocalUser|Set-ADAccountPassword|Disable-ADAccount|Remove-ADUser|Remove-LocalUser|userdel[\s]+|usermod[\s]+-L)`
+        )
+      )
+    )
+    not re.regex($e.target.user.userid, `.*\$`)
+
+  outcome:
+    $risk_score = max(
+      if($e.metadata.event_type = "USER_DELETION", 90,
+      if($e.metadata.event_type = "USER_ACCOUNT_DISABLED", 70,
+      if($e.metadata.event_type = "USER_CHANGE_PASSWORD", 60,
+      if($e.metadata.event_type = "USER_ACCOUNT_LOCKED", 30, 40))))
+    )
+    $host = $e.principal.hostname
+    $actor = $e.principal.user.userid
+    $target_user = $e.target.user.userid
+    $event_type = $e.metadata.event_type
+    $command = $e.target.process.command_line
+
+  condition:
+    $e
+}

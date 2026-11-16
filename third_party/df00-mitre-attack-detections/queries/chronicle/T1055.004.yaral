@@ -1,0 +1,43 @@
+# T1055.004 — Asynchronous Procedure Call
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1055.004 APC Injection via UDM PROCESS_OPEN events.
+# Data Sources: Google Chronicle UDM (PROCESS_OPEN events), Sysmon via Chronicle Forwarder, Microsoft Defender for Endpoint via Chronicle connector
+# Required Sources: UDM events with metadata.event_type = PROCESS_OPEN
+# False Positives: EDR and endpoint security agents deployed outside C:\Windows\ that require PROCESS_ALL_ACCESS (0x1FFFFF) to enumerate and scan memory regions of svchost.exe, dllhost.exe, and conhost.exe for malicious code patterns, Managed service provider RMM tools that use PowerShell or scripting hosts to open elevated handles to Windows host processes for health monitoring, remote remediation, or configuration management tasks, Authorized red team and penetration testing frameworks operating in sanctioned assessment engagements that probe process access controls against system processes to validate detection coverage
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1055_004_apc_injection_process_access {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1055.004 APC Injection via cross-process access with injection-capable rights targeting common Early Bird victim processes"
+    severity = "HIGH"
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1055.004"
+    confidence = "high"
+    reference = "https://attack.mitre.org/techniques/T1055/004/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_OPEN"
+    $e.target.process.file.full_path = /(?i)(svchost|rundll32|EhStorAuthn|ctfmon|conhost|dllhost)\.exe$/
+    (
+      $e.principal.process.file.full_path = /(?i)(powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32)\.exe$/ or
+      not $e.principal.process.file.full_path = /(?i)^c:\\windows\\/
+    )
+    (
+      $e.target.process.access_mask = "0x1FFFFF" or
+      $e.target.process.access_mask = "0x001F0FFF" or
+      $e.target.process.access_mask = "0x1F3FFF" or
+      $e.target.process.access_mask = "0x1410" or
+      $e.target.process.access_mask = "0x143A" or
+      $e.target.process.access_mask = "0x1F1FFF"
+    )
+    $e.principal.hostname = $hostname
+
+  condition:
+    $e
+}

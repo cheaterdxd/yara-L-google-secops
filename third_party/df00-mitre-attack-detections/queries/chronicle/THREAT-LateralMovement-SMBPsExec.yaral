@@ -1,0 +1,93 @@
+# THREAT-LateralMovement-SMBPsExec — Lateral Movement via SMB and PsExec-Style Remote Execution
+# Tactic: Lateral Movement, Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules covering SMB/PsExec lateral movement: (1) PsExec-family execution from user-writable staging paths, (2) PSEXESVC service creation as high-fidelity remote execution indicator, (3) bulk Admin share access pattern detection.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs via Chronicle forwarder, Microsoft Defender for Endpoint via Chronicle integration, Windows Sysmon via Chronicle
+# Required Sources: UDM events: PROCESS_LAUNCH, SERVICE_CREATION, NETWORK_CONNECTION
+# False Positives: IT administrators intentionally running PsExec from non-standard paths during rapid incident response or emergency remote remediation tasks, Software deployment systems (SCCM, Intune) that temporarily install PSEXESVC during legitimate managed software push operations, Domain controllers generating high volumes of SMB connections during Group Policy processing, SYSVOL replication, or DFS namespace referrals
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-LateralMovement-SMBPsExec
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule threat_lateral_movement_smb_psexec {
+  meta:
+    name = "THREAT-LateralMovement-SMBPsExec"
+    description = "Detects lateral movement via SMB and PsExec-style remote execution — PsExec/PAExec from non-standard paths, PSEXESVC service creation, and bulk Admin share access"
+    author = "df00tech Detection Engineering"
+    date = "2026-04-24"
+    mitre_attack = "T1021.002, T1570, T1543.003"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    reference = "https://www.ncsc.gov.uk/news/akira-ransomware"
+
+  events:
+    // Signal 1: PsExec/PAExec execution from user-writable staging path
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.hostname = $hostname
+    $proc.target.process.file.full_path = /(?i)(psexec\.exe|psexec64\.exe|paexec\.exe|remcom\.exe|csexec\.exe)$/
+    not $proc.target.process.file.full_path = /(?i)(\\tools\\|\\sysinternals\\|\\program files\\)/
+    (
+      $proc.target.process.file.full_path = /(?i)\\users\\/
+      or $proc.target.process.file.full_path = /(?i)\\temp\\/
+      or $proc.target.process.file.full_path = /(?i)\\programdata\\/
+      or $proc.target.process.file.full_path = /(?i)\\appdata\\/
+      or $proc.target.process.file.full_path = /(?i)\\public\\/
+    )
+
+  match:
+    $hostname over 30m
+
+  condition:
+    $proc
+}
+
+rule threat_psexesvc_service_creation {
+  meta:
+    name = "THREAT-PSEXESVC-ServiceCreation"
+    description = "Detects PSEXESVC service being installed on the target host — server-side PsExec indicator with highest fidelity for remote execution lateral movement"
+    author = "df00tech Detection Engineering"
+    date = "2026-04-24"
+    mitre_attack = "T1021.002, T1543.003"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+
+  events:
+    $svc.metadata.event_type = "SERVICE_CREATION"
+    $svc.target.resource.name = /(?i)(psexesvc|paexec|remcom)/
+    $svc.principal.hostname = $hostname
+
+  match:
+    $hostname over 5m
+
+  condition:
+    $svc
+}
+
+rule threat_bulk_smb_admin_share_access {
+  meta:
+    name = "THREAT-BulkSMB-AdminShare"
+    description = "Detects bulk outbound SMB connections from a single host to multiple internal targets — characteristic of PsExec-based lateral movement scanning"
+    author = "df00tech Detection Engineering"
+    date = "2026-04-24"
+    mitre_attack = "T1021.002"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+
+  events:
+    $net.metadata.event_type = "NETWORK_CONNECTION"
+    $net.network.application_protocol = "SMB"
+    $net.principal.hostname = $src_host
+    $net.target.ip = $dst_ip
+    not $net.principal.process.file.full_path = /(?i)(svchost\.exe|lsass\.exe)/
+
+  match:
+    $src_host over 15m
+
+  outcome:
+    $unique_targets = count_distinct($dst_ip)
+
+  condition:
+    #net >= 5 and $unique_targets >= 3
+}

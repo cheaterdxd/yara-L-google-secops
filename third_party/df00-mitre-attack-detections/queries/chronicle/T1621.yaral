@@ -1,0 +1,29 @@
+# T1621 — Multi-Factor Authentication Request Generation
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1621 detection using UDM event types and field matching.
+# Data Sources: Azure AD Sign-in Logs, Okta, Duo Security
+# Required Sources: USER_LOGIN, SSO
+# False Positives: Users with intermittent network connectivity who retry authentication multiple times legitimately, generating repeated MFA prompts without adversarial intent, Conditional Access policies configured to always require MFA on every request (rather than session-based) can generate high volumes of 50076 events for normal users, Automated service accounts or scripts using interactive auth flows that repeatedly fail MFA challenge — these should use device-based or certificate auth instead, IT administrators testing MFA policies, running phishing simulation exercises, or conducting MFA enrollment drives that generate burst MFA events for multiple accounts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1621
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_mfa_fatigue {
+  meta:
+    author = "Argus"
+    description = "Detects MFA fatigue attacks via repeated failed MFA prompts"
+    severity = "HIGH"
+    technique = "T1621"
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.metadata.product_name = "Microsoft Azure Active Directory"
+    $e.security_result.action = "BLOCK"
+    re.regex($e.security_result.description, `MFA|multi-factor|50074|50076|50158`) nocase
+  match:
+    $e.principal.user.userid over 1h
+  condition:
+    #e > 5
+}

@@ -1,0 +1,91 @@
+# T1583 — Acquire Infrastructure
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting USER_LOGIN events in UDM where the principal IP matches known adversary-acquired infrastructure ranges.
+# Data Sources: Google Chronicle SIEM, UDM USER_LOGIN events from Windows Active Directory, Azure AD / Google Workspace identity logs ingested into Chronicle, Chronicle Unified Data Model (UDM) normalized authentication telemetry
+# Required Sources: UDM USER_LOGIN events
+# False Positives: Employees or contractors who work from regions where commercial VPN use is common for privacy or censorship circumvention, with VPN exit nodes assigned to DigitalOcean or Hetzner IP ranges — create a reference list of authorized VPN provider ASNs and exclude after HR verification., Cloud-hosted monitoring or ITSM platforms (e.g., PagerDuty, ServiceNow integrations) that authenticate inbound to the environment using service accounts from VPS-hosted integration layers — these should be allowlisted by service account name., Offshore development or managed services vendors who provision their build and deployment systems on OVH or Vultr infrastructure — authentication from these sources should be documented in vendor agreements and excluded from alerting.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1583
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1583_acquire_infrastructure_hosting_asn_auth {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects authentication events originating from IP ranges associated with adversary-acquired infrastructure including bulletproof hosting, VPS providers, and Tor exit node ranges. Covers T1583 PRE-ATT&CK infrastructure acquisition indicators observable in authentication telemetry."
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1583"
+    mitre_attack_sub_technique = "T1583.003, T1583.006"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+    created = "2024-01-01"
+    reference = "https://attack.mitre.org/techniques/T1583/"
+
+  events:
+    $auth.metadata.event_type = "USER_LOGIN"
+    $auth.principal.ip != "127.0.0.1"
+    $auth.principal.ip != "0.0.0.0"
+    not net.ip_in_range_cidr($auth.principal.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($auth.principal.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($auth.principal.ip, "172.16.0.0/12")
+    (
+      // Known Tor exit nodes and proxy infrastructure
+      net.ip_in_range_cidr($auth.principal.ip, "185.220.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "185.209.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "45.83.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "194.165.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "146.70.0.0/16") or
+      // DigitalOcean
+      net.ip_in_range_cidr($auth.principal.ip, "167.71.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "104.248.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "68.183.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "159.65.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "138.197.0.0/16") or
+      // Hetzner Online GmbH
+      net.ip_in_range_cidr($auth.principal.ip, "95.217.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "116.202.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "135.181.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "65.109.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "5.9.0.0/16") or
+      // OVH SAS
+      net.ip_in_range_cidr($auth.principal.ip, "51.77.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "51.68.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "178.32.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "54.36.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "141.95.0.0/16") or
+      // Vultr
+      net.ip_in_range_cidr($auth.principal.ip, "45.32.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "66.175.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "104.156.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "207.246.0.0/16") or
+      // M247 bulletproof hosting
+      net.ip_in_range_cidr($auth.principal.ip, "194.5.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "93.115.0.0/16") or
+      net.ip_in_range_cidr($auth.principal.ip, "92.223.0.0/16")
+    )
+    $auth.target.user.userid != ""
+    $auth.target.user.userid != /ANONYMOUS.*/
+
+  match:
+    $auth.target.user.userid over 1h
+
+  outcome:
+    $risk_score = max(
+      if(net.ip_in_range_cidr($auth.principal.ip, "185.220.0.0/16") or
+         net.ip_in_range_cidr($auth.principal.ip, "185.209.0.0/16") or
+         net.ip_in_range_cidr($auth.principal.ip, "194.5.0.0/16") or
+         net.ip_in_range_cidr($auth.principal.ip, "93.115.0.0/16"), 90,
+      if(net.ip_in_range_cidr($auth.principal.ip, "167.71.0.0/16") or
+         net.ip_in_range_cidr($auth.principal.ip, "104.248.0.0/16"), 70, 55))
+    )
+    $event_count = count_distinct($auth.metadata.id)
+    $unique_ips = count_distinct($auth.principal.ip)
+    $target_user = $auth.target.user.userid
+    $src_ip = array_distinct($auth.principal.ip)
+
+  condition:
+    $auth
+}

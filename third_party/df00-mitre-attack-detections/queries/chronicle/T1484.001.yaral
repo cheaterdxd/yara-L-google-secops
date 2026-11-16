@@ -1,0 +1,57 @@
+# T1484.001 — Group Policy Modification
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule for T1484.001 Group Policy Modification.
+# Data Sources: Windows Event Log ingestion via Chronicle forwarder or Google SecOps SIEM agent — domain controllers with Directory Service Access auditing (EventIDs 5136/5137/5138/5141), Sysmon telemetry forwarded to Chronicle — EventID 11 (File Create) for SYSVOL file creation mapped to FILE_CREATION UDM, EventID 1 (Process Create) for PowerShell mapped to PROCESS_LAUNCH UDM, Microsoft Defender for Endpoint telemetry via Chronicle integration — DeviceProcessEvents and DeviceFileEvents normalized to UDM
+# Required Sources: UDM events — metadata.event_type: FILE_CREATION, PROCESS_LAUNCH, UDM events — metadata.product_event_type: 5136, 5137, 5138, 5141, principal.process.file.full_path (PROCESS_LAUNCH events), target.process.command_line (PROCESS_LAUNCH events), target.file.full_path (FILE_CREATION events), target.resource.name (Directory Service events)
+# False Positives: Group Policy administrators running scheduled GPO compliance audits or applying domain security baselines during change windows — the AD Directory branch fires on every GPO attribute modification including benign description or version updates, Microsoft Endpoint Configuration Manager (MECM) and Intune co-management scenarios where system accounts write policy templates to SYSVOL during client health evaluation or baseline enforcement cycles, Domain controller SYSVOL DFS-R replication traffic creates FILE_CREATION UDM events on replica DCs as they receive GPO content pushed from the PDC emulator — these are legitimate propagation events and will appear on all DCs simultaneously
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1484.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1484_001_group_policy_modification {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1484.001 Group Policy Modification via AD Directory Service audit events, SYSVOL policy file creation, or PowerShell GPO management cmdlet and attack tool execution. Covers LockBit/Qilin GPO-based ransomware propagation, Evil Corp lateral movement, and SharpGPOAbuse/Empire New-GPOImmediateTask tooling."
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1484.001"
+    mitre_attack_technique_name = "Group Policy Modification"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "Legitimate GPO administration via GPMC, SCCM baseline deployment, AD backup operations"
+    created = "2026-04-19"
+    version = "1.0"
+
+  events:
+    (
+      /* Branch 1: AD Directory Service Access Audit — GPO object lifecycle */
+      $e.metadata.vendor_name = "Microsoft" and
+      $e.metadata.product_event_type in ("5136", "5137", "5138", "5141") and
+      (
+        re.regex($e.target.resource.name, `(?i)CN=Policies.*CN=System`) or
+        $e.target.resource.resource_type = "DOMAIN" and
+        re.regex($e.target.resource.attribute.labels["ObjectClass"], `(?i)groupPolicyContainer`)
+      )
+    ) or
+    (
+      /* Branch 2: SYSVOL policy file creation targeting critical GPO content */
+      $e.metadata.event_type = "FILE_CREATION" and
+      re.regex($e.target.file.full_path, `(?i)\\sysvol\\`) and
+      re.regex($e.target.file.full_path,
+        `(?i)(ScheduledTasks\.xml|GptTmpl\.inf|GPT\.INI|Registry\.xml|Startup\.xml|Shutdown\.xml|Groups\.xml|Services\.xml|Files\.xml)`
+      )
+    ) or
+    (
+      /* Branch 3: PowerShell GPO cmdlets and known attack tools */
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($e.principal.process.file.full_path, `(?i)(powershell|pwsh)\.exe`) and
+      re.regex($e.target.process.command_line,
+        `(?i)(New-GPOImmediateTask|New-GPPImmediateTask|SharpGPOAbuse|Invoke-GPOZaurr|Set-GPPermissions|Set-GPOLink|Import-GPO|SeEnableDelegationPrivilege|GptTmpl\.inf|Get-GPPermissions|New-GPLink|Set-GPRegistryValue)`
+      )
+    )
+
+  condition:
+    $e
+}

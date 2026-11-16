@@ -1,0 +1,79 @@
+# T1585.003 — Cloud Accounts
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 detection rules for T1585.003 Cloud Accounts: (1) t1585_003_teams_it_impersonation — fires on Microsoft Teams NETWORK_CONNECTION or USER_COMMUNICATION events where the sender UPN contains IT/helpdesk impersonation keywords, matching the Storm-1811 fake IT support vishing TTP; (2) t1585_003_oauth_cloud_storage_grant — fires on Azure AD USER_RESOURCE_ACCESS consent events where the target application matches adversary-preferred cloud storage platforms used for exfiltration or payload hosting; (3) t1585_003_risky_guest_signin — fires on Azure AD USER_LOGIN events for Guest-role accounts where Azure ID Protection severity is HIGH or MEDIUM and the target application is a Microsoft cloud service.
+# Data Sources: Chronicle Microsoft Teams UDM parser, Chronicle Azure Active Directory UDM parser
+# Required Sources: UDM events (metadata.product_name: Microsoft Teams), UDM events (metadata.product_name: Azure Active Directory)
+# False Positives: Third-party managed helpdesk provider accounts with 'helpdesk' or 'itsupport' in the email local-part legitimately federated into the organization's Teams tenant for contracted IT support delivery, OAuth consent events for enterprise-tier cloud storage applications (Dropbox Business, Box Enterprise) that are approved by IT policy but processed through end-user OAuth consent rather than tenant-wide admin consent, Guest accounts from trusted partner organizations whose Azure ID Protection risk scores elevate to MEDIUM due to sign-in from home networks or during travel, not attributable to adversary-controlled account usage
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1585.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1585_003_teams_it_impersonation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "External Teams accounts impersonating IT helpdesk personas (Storm-1811 TTP) - T1585.003"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1585.003"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1585/003/"
+
+  events:
+    $e.metadata.product_name = "Microsoft Teams"
+    (
+      $e.metadata.event_type = "NETWORK_CONNECTION" or
+      $e.metadata.event_type = "USER_COMMUNICATION"
+    )
+    re.regex($e.principal.user.email_addresses,
+      `(?i)(helpdesk|help_desk|help\.desk|itsupport|it_support|servicedesk|service_desk|techsupport|tech_support|itadmin|sysadmin|microsoftsupport|o365support|m365support)`)
+    not re.regex($e.principal.user.email_addresses, `@yourdomain\.com$`)
+
+  condition:
+    $e
+}
+
+rule t1585_003_oauth_cloud_storage_grant {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "OAuth consent granted to adversary-favored cloud storage app for exfiltration or tool staging - T1585.003"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1585.003"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1585/003/"
+
+  events:
+    $e.metadata.product_name = "Azure Active Directory"
+    $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+    re.regex($e.metadata.description, `(?i)consent to application`)
+    re.regex($e.target.application,
+      `(?i)(dropbox|mega|pcloud|sync\.com|mediafire|box\.com)`)
+
+  condition:
+    $e
+}
+
+rule t1585_003_risky_guest_signin {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "High/medium risk Azure AD guest sign-in to Microsoft cloud services - T1585.003"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1585.003"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1585/003/"
+
+  events:
+    $e.metadata.product_name = "Azure Active Directory"
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.principal.user.attribute.roles.name = "Guest"
+    $e.security_result.severity in ["HIGH", "MEDIUM"]
+    re.regex($e.target.application,
+      `(?i)(microsoft teams|sharepoint|onedrive|office 365|microsoft 365)`)
+
+  condition:
+    $e
+}

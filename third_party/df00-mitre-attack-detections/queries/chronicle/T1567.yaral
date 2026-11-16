@@ -1,0 +1,39 @@
+# T1567 — Exfiltration Over Web Service
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1567 exfiltration over web services.
+# Data Sources: Google Chronicle UDM, Endpoint telemetry forwarded to Chronicle, Network telemetry (DNS, HTTP metadata)
+# Required Sources: NETWORK_CONNECTION UDM events
+# False Positives: Automated CI/CD pipelines using Python or Node.js to deploy releases to GitHub releases, GitLab CI artifacts, or AWS S3 buckets as part of normal software delivery, System administration scripts using curl or PowerShell to upload logs, diagnostics, or configuration snapshots to authorized cloud storage for troubleshooting, End-user productivity applications such as the Slack desktop client or VS Code extensions that internally invoke curl or node to communicate with external APIs
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1567
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1567_exfiltration_over_web_service {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects exfiltration over web services (T1567) — connections from suspicious processes to known file-sharing, messaging, paste, tunnel, and cloud storage domains, or high-volume uploads from LOLBin processes."
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1567"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.principal.process.file.full_path != ""
+
+    // Match on known exfiltration domains OR cloud storage domains
+    (
+      re.regex($e.target.hostname, `(?i)(api\.telegram\.org|discord\.com|discordapp\.com|mega\.co\.nz|mega\.nz|file\.io|transfer\.sh|gofile\.io|anonymfiles\.com|anonfiles\.com|ufile\.io|pixeldrain\.com|paste\.ee|pastebin\.com|hastebin\.com|rentry\.co|ghostbin\.com|privatbin\.net|ngrok\.io|ngrok-free\.app|serveo\.net)`) or
+      re.regex($e.target.hostname, `(?i)(content\.dropboxapi\.com|api\.dropboxapi\.com|www\.googleapis\.com|drive\.google\.com|graph\.microsoft\.com|onedrive\.live\.com|api\.github\.com|gitlab\.com|bitbucket\.org|s3\.amazonaws\.com|storage\.googleapis\.com)`)
+    )
+
+    // Initiated by a suspicious upload-capable process
+    re.regex($e.principal.process.file.full_path, `(?i)(curl|wget|powershell|pwsh|python|node|wscript|cscript|certutil|bitsadmin)`)
+
+  condition:
+    $e
+}

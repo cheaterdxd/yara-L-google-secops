@@ -1,0 +1,33 @@
+# T1600.001 — Reduce Key Space
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1600.001 detection using UDM event types and field matching.
+# Data Sources: Network Device Syslog, Cisco IOS, Juniper JunOS
+# Required Sources: NETWORK_UNCATEGORIZED
+# False Positives: Legacy network devices (Cisco ASA 5505, older IOS versions) that only support DES or 1024-bit RSA due to hardware limitations — these will trigger on existing configurations, not new adversary changes, Authorized penetration testing or security assessments where engineers intentionally configure weak crypto to test detection coverage, IPsec site-to-site VPN interoperability requirements with legacy partner organizations that mandate DH group 2 or 3DES in IKE phase 1 policy, Scheduled key rotation procedures where the team temporarily generates a smaller key before importing the final production key, Automated network configuration management tools (Ansible, SolarWinds NCM, Cisco DNA Center) that apply baseline templates containing older cipher suite definitions
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1600.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_weaken_encryption {
+  meta:
+    author = "Argus"
+    description = "Detects cryptographic weakening on network devices"
+    severity = "HIGH"
+    technique = "T1600"
+  events:
+    $e.metadata.event_type = "NETWORK_UNCATEGORIZED"
+    re.regex($e.principal.hostname, `.*`) nocase
+    (
+      re.regex($e.network.application_protocol, `syslog`) or
+      $e.metadata.product_name = "Cisco IOS"
+    )
+    (
+      re.regex($e.network.session_id, `no crypto|encryption des|esp-des|modulus 512|modulus 768|null-encryption|ip ssh version 1|group 1 |group 2 `) nocase or
+      re.regex($e.principal.resource.name, `no crypto|encryption des`) nocase
+    )
+  condition:
+    $e
+}

@@ -1,0 +1,67 @@
+# T1134.001 — Token Impersonation/Theft
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 multi-branch rule detecting T1134.001 token impersonation/theft across three attack patterns.
+# Data Sources: Chronicle with Windows Sysmon telemetry ingested via Google Chronicle Forwarder or Ingestion API, Windows Security Event Log via Chronicle Windows Sensor or Bindplane
+# Required Sources: Chronicle UDM Events (PROCESS_OPEN, PROCESS_LAUNCH event types and Windows Security raw log ingestion)
+# False Positives: Microsoft Defender Antivirus and Windows Defender ATP routinely open LSASS for memory scanning — the principal process exclusion covers MsMpEng.exe but newer Microsoft security process names may require additions to the allowlist regex, SQL Server Database Engine and IIS worker processes (w3wp.exe) hold SeImpersonatePrivilege by design for impersonating database connection principals — these generate EventID 4672 alerts on every service account logon and should be excluded by principal.user.userid pattern, Authorized penetration testing activities using Cobalt Strike or Havoc C2 on designated red team endpoints will produce high-fidelity Branch 2 matches — scope detection to production assets using principal.asset.hostname or asset group labels
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1134.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1134_001_token_impersonation_theft {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects token impersonation and theft via privileged process handle acquisition, token manipulation tool execution, and high-risk privilege assignment to non-system accounts (MITRE ATT&CK T1134.001)"
+    mitre_attack_technique = "T1134.001"
+    mitre_attack_tactic = "Privilege Escalation, Defense Evasion"
+    platform = "Windows"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    reference = "https://attack.mitre.org/techniques/T1134/001/"
+
+  events:
+    (
+      /* Branch 1: PROCESS_OPEN to LSASS or other privileged Windows processes with token-capable access rights */
+      (
+        $e.metadata.event_type = "PROCESS_OPEN" and
+        re.regex($e.target.process.file.full_path,
+          `(?i)(\\lsass\.exe|\\winlogon\.exe|\\csrss\.exe|\\services\.exe|\\wininit\.exe)$`) and
+        $e.target.process.access_mask in
+          ("0x1010", "0x1fffff", "0x1f0fff", "0x143a", "0x0040", "0x40", "0x1410", "0x0002", "0x0004") and
+        not re.regex($e.principal.process.file.full_path,
+          `(?i)(\\MsMpEng\.exe|\\SenseIR\.exe|\\SenseCE\.exe|\\SecurityHealthService\.exe|\\csrss\.exe|\\smss\.exe|\\wininit\.exe|\\AzureADConnectAuthenticatio\.exe)$`)
+      )
+      or
+      /* Branch 2: PROCESS_LAUNCH matching known token manipulation tool names or C2 framework post-exploitation CLI strings */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        (
+          re.regex($e.target.process.file.full_path,
+            `(?i)(\\incognito\.exe|\\tokenvator\.exe|\\tokenduplicator\.exe|\\token_manipulator\.exe)$`) or
+          re.regex($e.target.process.command_line,
+            `(?i)(steal_token|impersonate_token|Invoke-TokenManipulation|ImpersonateLoggedOnUser|DuplicateTokenEx|SetThreadToken|getsystem|rev2self|NtFilterToken|SeImpersonatePrivilege)`)
+        )
+      )
+      or
+      /* Branch 3: Windows Security EventID 4672 — high-risk impersonation or TCB privilege assigned to non-system interactive account */
+      (
+        $e.metadata.product_event_type = "4672" and
+        (
+          re.regex($e.extensions.auth.auth_details,
+            `(?i)(SeImpersonatePrivilege|SeAssignPrimaryTokenPrivilege|SeTcbPrivilege|SeDebugPrivilege)`) or
+          re.regex($e.target.user.attribute.labels.value,
+            `(?i)(SeImpersonatePrivilege|SeAssignPrimaryTokenPrivilege|SeTcbPrivilege|SeDebugPrivilege)`)
+        ) and
+        not re.regex($e.principal.user.userid, `\$$`) and
+        not $e.principal.user.userid in
+          ("SYSTEM", "LOCAL SERVICE", "NETWORK SERVICE", "ANONYMOUS LOGON")
+      )
+    )
+
+  condition:
+    $e
+}

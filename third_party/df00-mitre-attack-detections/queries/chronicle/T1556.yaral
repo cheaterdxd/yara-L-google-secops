@@ -1,0 +1,58 @@
+# T1556 — Modify Authentication Process
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for T1556 using Google Security Operations UDM normalized event model.
+# Data Sources: Google Security Operations (Chronicle SIEM), Windows Sysmon via Chronicle forwarder agent (EventCode 7, 13), Microsoft Defender for Endpoint via Chronicle integration (DeviceRegistryEvents, DeviceImageLoadEvents), Windows Event Forwarding (WEF) ingested via Chronicle
+# Required Sources: UDM Events — REGISTRY_MODIFICATION event type, UDM Events — PROCESS_MODULE_LOAD event type
+# False Positives: Microsoft Credential Guard or Virtualization-Based Security (VBS) initialization loading isolation shim DLLs into lsass.exe during the Windows secure boot sequence on Hyper-V or hardware VBS-enabled endpoints, Domain controller promotion (dcpromo) or AD DS / AD LDS role installation modifying authentication packages and security packages as part of legitimate domain controller setup, Enterprise PKI or certificate authority software (DigiCert, Entrust, ADCS) registering cryptographic service providers or minidriver DLLs into the LSA credential provider chain during initial deployment
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1556_lsa_registry_modification {
+  meta:
+    author = "Detection Engineering"
+    description = "T1556 - LSA authentication registry modification for credential interception. Covers Notification Packages (password filter DLLs), Security Packages (SSPs), Authentication Packages, NetworkProvider Order, GinaDLL, and Credential Providers keys."
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1556"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1556/"
+
+  events:
+    $reg.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($reg.target.registry.registry_key, `(?i)\\Control\\Lsa\\Notification Packages`) or
+      re.regex($reg.target.registry.registry_key, `(?i)\\Control\\Lsa\\Security Packages`) or
+      re.regex($reg.target.registry.registry_key, `(?i)\\Control\\Lsa\\Authentication Packages`) or
+      re.regex($reg.target.registry.registry_key, `(?i)\\Control\\Lsa\\OSConfig`) or
+      re.regex($reg.target.registry.registry_key, `(?i)\\Control\\NetworkProvider\\Order`) or
+      re.regex($reg.target.registry.registry_key, `(?i)\\CurrentVersion\\Winlogon\\GinaDLL`) or
+      re.regex($reg.target.registry.registry_key, `(?i)\\CurrentVersion\\Authentication\\Credential Providers`)
+    )
+    not re.regex($reg.principal.process.file.full_path, `(?i)(TrustedInstaller\.exe|MsMpEng\.exe|msiexec\.exe|wuauclt\.exe|WindowsUpdateAgent\.exe)`)
+
+  condition:
+    $reg
+}
+
+rule t1556_lsass_unexpected_dll_load {
+  meta:
+    author = "Detection Engineering"
+    description = "T1556 - Unexpected DLL loaded by lsass.exe, indicative of SSP injection, in-memory password filter registration, or skeleton key implant. Filters known-good authentication DLL baseline."
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1556"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1556/"
+
+  events:
+    $load.metadata.event_type = "PROCESS_MODULE_LOAD"
+    re.regex($load.principal.process.file.full_path, `(?i)[/\\]lsass\.exe$`)
+    not re.regex($load.target.file.full_path, `(?i)(ntdll\.dll|kernel32\.dll|kernelbase\.dll|msvcrt\.dll|kerberos\.dll|msv1_0\.dll|wdigest\.dll|tspkg\.dll|pku2u\.dll|cloudap\.dll|schannel\.dll|cryptdll\.dll|samsrv\.dll|lsasrv\.dll|netlogon\.dll|ntlmshared\.dll|rassfm\.dll|svrt\.dll)$`)
+
+  condition:
+    $load
+}

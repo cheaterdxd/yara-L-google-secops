@@ -1,0 +1,39 @@
+# T1555.003 — Credentials from Web Browsers
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting browser credential theft via UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle UDM, Windows Endpoint via Chronicle Forwarder, CrowdStrike / SentinelOne / Carbon Black via Chronicle ingestion
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Automated browser testing frameworks (e.g., Puppeteer, Playwright headless) that launch Chrome or Chromium with custom profile paths referencing credential store files, DFIR or forensic tools (Autopsy, Magnet AXIOM, Nirsoft utilities) running legitimately on endpoints during authorized investigations, Enterprise SSO or identity management agents that interface with browser credential APIs for federated authentication bootstrapping
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1555.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1555_003_browser_credential_theft {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1555.003 - credential theft from web browsers via known harvesting tools, unauthorized access to browser credential stores, DPAPI decryption calls, and SQL queries against browser password databases"
+    mitre_attack_technique = "T1555.003"
+    mitre_attack_tactic = "Credential Access"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1555/003/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.principal.process.file.full_path, `(?i)(browserpassview|webbrowserpassview|chromepass|mimikittenz|browserghost|sharpchromium|hackbrowserdata|lazagne)`)
+      or re.regex($e.target.process.file.full_path, `(?i)(browserpassview|webbrowserpassview|chromepass|mimikittenz|browserghost|sharpchromium|hackbrowserdata|lazagne)`)
+      or (
+        re.regex($e.target.process.command_line, `(?i)(login[_ ]data|logins\.json|key[34]\.db|signons\.sqlite|local[_ ]state)`)
+        and not re.regex($e.principal.process.file.full_path, `(?i)(chrome\.exe|firefox\.exe|msedge\.exe|brave\.exe|opera\.exe|searchprotocolhost\.exe|searchindexer\.exe)`)
+      )
+      or re.regex($e.target.process.command_line, `(?i)cryptunprotectdata`)
+      or re.regex($e.target.process.command_line, `(?i)select.+(from logins|password_value)`)
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,48 @@
+# T1556.008 — Network Provider DLL
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule for T1556.008 Network Provider DLL.
+# Data Sources: Google Chronicle UDM — REGISTRY_MODIFICATION events, Google Chronicle UDM — FILE_CREATION events, Windows endpoint telemetry (Sysmon, Microsoft Defender for Endpoint, CrowdStrike) forwarded to Chronicle via ingestion feeds
+# Required Sources: UDM events (metadata.event_type: REGISTRY_MODIFICATION, REGISTRY_CREATION, FILE_CREATION)
+# False Positives: Legitimate network authentication middleware such as Cisco AnyConnect, GlobalProtect, or third-party RADIUS clients that install as Windows network providers — these trigger both the registry and file creation signals during installation, Windows domain join operations and Active Directory authentication component updates that register or reorder network provider entries under Control\NetworkProvider\Order, Security products implementing credential inspection capabilities (e.g., CyberArk Endpoint Privilege Manager, Delinea) that function as registered network providers to intercept and vault credentials
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1556_008_NetworkProviderDLL {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects malicious network provider DLL registration (T1556.008): monitors registry modifications to HKLM\\SYSTEM\\CurrentControlSet\\Control\\NetworkProvider and Services\\*\\NetworkProvider keys, and unexpected DLL creation in System32 by non-trusted processes. Credential-harvesting DLLs registered as network providers receive cleartext passwords via NPLogonNotify() on every logon."
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1556.008"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1556/008/"
+    created = "2026-04-13"
+
+  events:
+    (
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION" or
+        $e.metadata.event_type = "REGISTRY_CREATION"
+      ) and
+      (
+        re.regex($e.target.registry.registry_key, `(?i).*\\Control\\NetworkProvider.*`) or
+        re.regex($e.target.registry.registry_key, `(?i).*\\CurrentControlSet\\Control\\NetworkProvider.*`) or
+        (
+          re.regex($e.target.registry.registry_key, `(?i).*\\Services\\[^\\]+\\NetworkProvider`) and
+          re.regex($e.target.registry.registry_value_name, `(?i)^(ProviderPath|Name)$`)
+        )
+      )
+    ) or
+    (
+      $e.metadata.event_type = "FILE_CREATION" and
+      re.regex($e.target.file.full_path, `(?i)^C:\\Windows\\System32\\[^\\]+\.dll$`) and
+      not re.regex($e.principal.process.file.full_path, `(?i)(msiexec|wusa|trustedinstaller|svchost|poqexec)\.exe$`)
+    )
+
+  condition:
+    $e
+}

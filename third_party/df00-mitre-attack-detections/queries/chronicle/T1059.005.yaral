@@ -1,0 +1,38 @@
+# T1059.005 — Visual Basic
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1059.005 Visual Basic execution by matching wscript.exe, cscript.exe, and mshta.exe process launches with suspicious command-line arguments including shell object creation, network download COM objects, WMI execution, registry manipulation, and encoded payload delivery chains.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows endpoint telemetry forwarded via Chronicle forwarder, Sysmon logs normalized to UDM PROCESS_LAUNCH events
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Legitimate enterprise build pipelines or CI/CD systems that invoke VBScript-based test harnesses or build steps via wscript.exe, Active Directory Group Policy scripts executed at logon/logoff via wscript.exe targeting network shares, Third-party monitoring agents (e.g., SolarWinds, Nagios) that use VBScript-based health check scripts to query WMI metrics
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1059_005_vbscript_suspicious_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious execution of wscript.exe, cscript.exe, or mshta.exe with VBScript/HTA indicators consistent with MITRE ATT&CK T1059.005 - Visual Basic"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.005"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(\\wscript\.exe|\\cscript\.exe|\\mshta\.exe)$/
+    (
+      re.regex($e.target.process.command_line, `(?i)(\.(vbs|vbe|wsf|hta))`)
+      or re.regex($e.target.process.command_line, `(?i)(createobject|wscript\.shell|shell\.application|scripting\.filesystemobject)`)
+      or re.regex($e.target.process.command_line, `(?i)(adodb\.stream|msxml2\.xmlhttp|winhttp\.winhttprequest)`)
+      or re.regex($e.target.process.command_line, `(?i)(winmgmts|win32_process|getobject)`)
+      or re.regex($e.target.process.command_line, `(?i)(powershell|cmd\s+/c|cmd\.exe)`)
+      or re.regex($e.target.process.command_line, `(?i)(\-decode|certutil|bitsadmin)`)
+      or re.regex($e.target.process.command_line, `(?i)(regwrite|regread|regdelete|environ\(|callbyname)`)
+    )
+
+  condition:
+    $e
+}

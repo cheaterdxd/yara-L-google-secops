@@ -1,0 +1,87 @@
+# T1586.002 — Email Accounts
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules covering T1586.002.
+# Data Sources: Microsoft Office 365 Audit Logs, Azure Active Directory Sign-in Logs
+# Required Sources: microsoft_office_365, azure_ad
+# False Positives: Users connected to corporate VPN tunnels where the egress IP resolves to a country different from the user's physical location — VPN exit nodes in a foreign datacenter will trigger impossible travel against a legitimate same-country sign-in, Executives or global sales staff who legitimately travel between countries and access email during short international transit hubs, with the 1-hour window too tight for their actual travel pace, Compliance or legal teams using automated tools that call Set-Mailbox or Set-InboxRule via service accounts with ForwardAsAttachmentTo parameters as part of regulatory archiving to third-party platforms
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1586.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1586_002_email_inbox_exfil_post_compromise {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1586.002 post-compromise pattern: successful M365 sign-in followed within 4h by inbox rule creation with email forwarding or deletion parameters, indicating adversary establishing exfiltration channel or persistence after account takeover"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1586.002"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1586/002/"
+    platforms = "Office 365, Azure AD"
+
+  events:
+    // Anchor: successful sign-in to M365 email
+    $signin.metadata.event_type = "USER_LOGIN"
+    $signin.metadata.vendor_name = "Microsoft"
+    $signin.extensions.auth.auth_result_type = "SUCCESS"
+    $signin.metadata.product_name = "Office 365"
+    $signin.principal.user.email_addresses = $user
+
+    // Correlated: inbox rule with exfiltration parameters within 4h
+    $rule_evt.metadata.event_type = "USER_RESOURCE_UPDATE_CONTENT"
+    $rule_evt.metadata.vendor_name = "Microsoft"
+    $rule_evt.metadata.product_name = "Office 365"
+    $rule_evt.metadata.product_event_type in (
+      "New-InboxRule", "Set-InboxRule", "UpdateInboxRules",
+      "Set-Mailbox", "Set-MailboxAutoReplyConfiguration"
+    )
+    re.regex(
+      $rule_evt.target.resource.attribute.labels["Parameters"],
+      `(?i)(ForwardTo|ForwardAsAttachmentTo|RedirectTo|DeleteMessage|MarkAsRead)`
+    )
+    $rule_evt.principal.user.email_addresses = $user
+
+  match:
+    $user over 4h
+
+  condition:
+    $signin and $rule_evt
+}
+
+rule t1586_002_impossible_travel_email_signin {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects impossible travel to Microsoft 365 email services — same account authenticates successfully from two different countries within 1 hour, a strong indicator of compromised credentials being used by an adversary in a foreign location while the victim continues normal activity"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1586.002"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1586/002/"
+
+  events:
+    $e1.metadata.event_type = "USER_LOGIN"
+    $e1.metadata.vendor_name = "Microsoft"
+    $e1.metadata.product_name = "Office 365"
+    $e1.extensions.auth.auth_result_type = "SUCCESS"
+    $e1.principal.user.email_addresses = $user
+    $e1.principal.ip_geo_artifact.location.country_or_region = $country1
+
+    $e2.metadata.event_type = "USER_LOGIN"
+    $e2.metadata.vendor_name = "Microsoft"
+    $e2.metadata.product_name = "Office 365"
+    $e2.extensions.auth.auth_result_type = "SUCCESS"
+    $e2.principal.user.email_addresses = $user
+    $e2.principal.ip_geo_artifact.location.country_or_region = $country2
+
+    $country1 != $country2
+    $e1.principal.ip != $e2.principal.ip
+
+  match:
+    $user over 1h
+
+  condition:
+    $e1 and $e2
+}

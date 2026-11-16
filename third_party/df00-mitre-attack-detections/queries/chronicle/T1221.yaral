@@ -1,0 +1,72 @@
+# T1221 — Template Injection
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting MITRE ATT&CK T1221 Template Injection using three UDM behavioral patterns.
+# Data Sources: Chronicle UDM via Windows Event Log forwarder, Sysmon events via Chronicle Ingestion API, Elastic Forwarder to Chronicle, Google Chronicle SIEM with Windows normalisation parser
+# Required Sources: UDM Events — NETWORK_CONNECTION, UDM Events — PROCESS_LAUNCH
+# False Positives: Legitimate corporate document templates hosted on external cloud storage providers or partner portals (Box, Dropbox, vendor extranets) where the template URL references a non-Microsoft host — maintain a Chronicle reference list of approved external template hosting domains and extend the not re.regex exclusion to match against it, Enterprise Office add-ins deployed via centralised policy that call vendor licensing, telemetry, or content endpoints over HTTP/HTTPS from within Office process context — these appear identical to remote template fetch NETWORK_CONNECTION events in UDM; cross-reference the add-in inventory against flagged destination hostnames, Automated document processing workflows (legal contract management, insurance form ingestion, financial report generation) where Office is driven via COM automation and spawns PowerShell or CMD for file output or format conversion — distinguish using principal.process.command_line to identify non-interactive invocations
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1221
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1221_template_injection_detection {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects MITRE ATT&CK T1221 Template Injection via Office remote template HTTP/SMB fetch and LOLBin child process spawning"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1221"
+    mitre_attack_technique_id = "T1221"
+    reference = "https://attack.mitre.org/techniques/T1221/"
+    created = "2026-04-13"
+    version = "1.0"
+
+  events:
+    (
+      (
+        // Branch 1 & 2: Office process initiating outbound network connection
+        $e.metadata.event_type = "NETWORK_CONNECTION"
+        and re.regex(
+          $e.principal.process.file.full_path,
+          `(?i)(winword|excel|powerpnt|mspub|msaccess|visio)\.exe$`
+        )
+        and (
+          (
+            // Branch 1: Remote template HTTP/HTTPS fetch to non-Microsoft host
+            (
+              $e.target.port = 80 or
+              $e.target.port = 443 or
+              $e.target.port = 8080 or
+              $e.target.port = 8443
+            )
+            and not re.regex(
+              $e.target.hostname,
+              `(?i)(microsoft\.com|office\.com|live\.com|microsoftonline\.com|windows\.net|sharepoint\.com|officecdn\.microsoft\.com|officecdna\.microsoft\.com|azure\.com|azurefd\.net|bing\.com|msecnd\.net|skype\.com|trafficmanager\.net|msftncsi\.com)`
+            )
+          )
+          or
+          // Branch 2: Forced NTLM auth via SMB UNC path template reference
+          $e.target.port = 445
+        )
+      )
+      or
+      (
+        // Branch 3: Office process spawning LOLBin child — post-template payload execution
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex(
+          $e.principal.process.file.full_path,
+          `(?i)(winword|excel|powerpnt|mspub|msaccess|visio)\.exe$`
+        )
+        and re.regex(
+          $e.target.process.file.full_path,
+          `(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|wmic|msiexec|svchost|conhost)\.exe$`
+        )
+      )
+    )
+
+  condition:
+    $e
+}

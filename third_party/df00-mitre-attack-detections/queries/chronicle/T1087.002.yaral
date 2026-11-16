@@ -1,0 +1,50 @@
+# T1087.002 — Domain Account
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting domain account enumeration using UDM process launch events.
+# Data Sources: Google Chronicle via Windows Forwarding, Chronicle UDM enriched process events, Windows Event Log ingestion via Chronicle SIEM
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Legitimate use of nltest.exe by domain controllers or trust verification scripts during routine AD health checks, BloodHound Community Edition used by internal red teams or authorized security assessments without prior alert suppression, Enterprise onboarding automation using Get-ADComputer or Get-ADUser to verify provisioning completeness for new endpoints or users
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1087.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1087_002_domain_account_enumeration {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects domain account enumeration via net.exe /domain commands, PowerShell AD module and PowerView cmdlets, and known AD recon tools such as AdFind, BloodHound, SharpHound, nltest, dsquery, and CrackMapExec."
+    mitre_attack_technique = "T1087.002"
+    mitre_attack_tactic = "Discovery"
+    severity = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1087/002/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+
+    (
+      // Net.exe domain enumeration
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(net\.exe|net1\.exe)$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)/domain`) or
+          re.regex($e.target.process.command_line, `(?i)(domain admins|domain users|domain controllers|enterprise admins|schema admins)`)
+        )
+      )
+      or
+      // PowerShell AD module and PowerView cmdlets
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)(Get-ADUser|Get-ADGroupMember|Get-ADGroup|Get-ADComputer|Get-ADObject|Get-ADDomain|Get-ADForest|Get-DomainUser|Get-DomainGroupMember|Get-DomainGroup|Get-NetUser|Get-NetGroup)`)
+      )
+      or
+      // Known AD enumeration tools
+      re.regex($e.target.process.file.full_path, `(?i)(adfind\.exe|nltest\.exe|dsquery\.exe|ldifde\.exe|csvde\.exe|dsget\.exe|sharphound\.exe|bloodhound\.exe|crackmapexec\.exe|cme\.exe)$`)
+    )
+
+  condition:
+    $e
+}

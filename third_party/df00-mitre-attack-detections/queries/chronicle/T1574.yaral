@@ -1,0 +1,34 @@
+# T1574 — Hijack Execution Flow
+# Tactic: Persistence, Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection for Hijack Execution Flow.
+# Data Sources: Google Chronicle SIEM, Endpoint telemetry
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Legitimate multi-stage installer processes that modify binaries during installation phases, Enterprise software deployment tools staging installer components in temp directories, Self-updating applications that download and replace their own binaries, Archive utilities that extract executables to temp before running them
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1574
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1574_hijack_execution {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects execution flow hijacking via installer or DLL path manipulation"
+    severity = "high"
+    confidence = "medium"
+    mitre_attack = "T1574"
+    reference = "https://attack.mitre.org/techniques/T1574/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)\\temp\\.*\.exe`) or
+      re.regex($e.target.process.file.full_path, `(?i)\\appdata\\.*\.exe`)
+    )
+    not re.regex($e.principal.process.file.full_path, `(?i)(msiexec|trustedinstaller|wusa|dpinst)`)
+    not $e.principal.user.user_display_name = "SYSTEM"
+
+  condition:
+    $e
+}

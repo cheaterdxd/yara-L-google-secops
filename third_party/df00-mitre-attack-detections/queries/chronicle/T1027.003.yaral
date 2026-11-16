@@ -1,0 +1,49 @@
+# T1027.003 — Steganography
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting steganography tool invocations and image-based payload extraction via PROCESS_LAUNCH UDM events, plus executable files written to user-accessible directories by browser processes via FILE_CREATION events.
+# Data Sources: Google Chronicle UDM ingestion pipeline, Windows endpoint telemetry forwarded to Chronicle (Sysmon, MDE), Chronicle forwarder with Windows Event Log collection
+# Required Sources: UDM PROCESS_LAUNCH events, UDM FILE_CREATION events
+# False Positives: Authorized adversary simulation operators using invoke-psimage or steghide on Chronicle-monitored endpoints as part of a documented T1027.003 technique test, Graphic design or media production environments where command-line image processing tools routinely reference decode, extract, or LSB operations against PNG, JPG, or BMP files, Endpoint users downloading vendor-supplied software via browser to the Downloads folder where the resulting EXE matches the PE write pattern but is a legitimate, signed installer
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1027_003_steganography_detection {
+  meta:
+    author          = "Detection Engineering"
+    description     = "Detects steganography tool execution, LSB or keyword-based image extraction commands, and PE/DLL files written to user directories by browser processes. Maps to MITRE ATT\&CK T1027.003 - Steganography."
+    mitre_tactic    = "Defense Evasion"
+    mitre_technique = "T1027.003"
+    severity        = "HIGH"
+    confidence      = "MEDIUM"
+    version         = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e.target.process.command_line,
+          `(?i)(invoke-psimage|steghide|openstego|outguess|stegdetect)`)
+        or (
+          re.regex($e.target.process.command_line,
+            `(?i)\.(png|jpg|jpeg|bmp|gif|tiff)`)
+          and re.regex($e.target.process.command_line,
+            `(?i)(extract|decode|lsb|steg|hidden|payload)`)
+        )
+      )
+    )
+    or
+    (
+      $e.metadata.event_type = "FILE_CREATION"
+      and re.regex($e.target.file.full_path,
+        `(?i)\\(Temp|Downloads|Pictures)\\[^\\]+\.(exe|dll)$`)
+      and re.regex($e.principal.process.file.full_path,
+        `(?i)(chrome|msedge|iexplore|firefox|explorer)\.exe$`)
+    )
+
+  condition:
+    $e
+}

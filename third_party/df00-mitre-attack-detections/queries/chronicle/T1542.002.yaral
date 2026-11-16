@@ -1,0 +1,57 @@
+# T1542.002 — Component Firmware
+# Tactic: Persistence, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting component firmware modification via process launch events.
+# Data Sources: Chronicle UDM - Endpoint Detection, Google Chronicle - Windows Event Forwarding, Chronicle UDM - Linux Auditd
+# Required Sources: UDM events (PROCESS_LAUNCH)
+# False Positives: Legitimate firmware update workflows triggered by enterprise patch management solutions such as Microsoft Endpoint Configuration Manager or Ansible playbooks during maintenance windows, IT hardware technicians using sg3_utils or nvme-cli for NVMe drive health diagnostics without write operations on production endpoints, Embedded systems or IoT device management platforms using fwupdmgr or vendor-specific tools for approved firmware lifecycle management
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1542.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1542_002_component_firmware_modification {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects component firmware modification attempts using known firmware utilities with write operations or raw device path access. Covers MITRE ATT&CK T1542.002."
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1542.002"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.principal.user.userid = $user
+    $e.target.process.command_line = $cmd
+    $e.target.process.file.full_path = $img
+
+    (
+      // Firmware tool detected in process image path
+      re.regex($img, `(?i)(hdparm|flashrom|nvflash|fwupdmgr|fwupd-tool|afuwin|afudos|amiflash|awdflash|mflash|ethtool|sg_write_buffer|sg3_utils|nvme|sdparm|atapwd|nls_933w)(\.exe)?$`) or
+
+      // Firmware tool with write operation arguments
+      (
+        re.regex($img, `(?i)(hdparm|flashrom|nvflash|fwupd|sg_write_buffer|ethtool|nvme|sdparm)`) and
+        re.regex($cmd, `(?i)(--write-sector|--yes-i-know-what-i-am-doing|security-set-pass|security-unlock|security-erase|security-disable|--flash|writedmabuf|--fwdl|--fw-download|download_fw)`)
+      ) or
+
+      // Raw device path access with firmware tool
+      (
+        re.regex($img, `(?i)(hdparm|flashrom|nvflash|fwupd|sg_write_buffer|ethtool|nvme|sdparm)`) and
+        re.regex($cmd, `(?i)(/dev/sd[a-z]|/dev/nvme[0-9]|/dev/hd[ab]|\\\\.\\\\physicaldrive|\\\\.\\\\scsi|\\\\device\\\\harddisk)`)
+      ) or
+
+      // Explicit write flags on raw device paths (any process)
+      (
+        re.regex($cmd, `(?i)(--yes-i-know-what-i-am-doing|--write-sector|security-erase|security-set-pass)`) and
+        re.regex($cmd, `(?i)(/dev/sd[a-z]|/dev/nvme|physicaldrive|\\\\device\\\\harddisk)`)
+      )
+    )
+
+  condition:
+    $e
+}

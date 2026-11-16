@@ -1,0 +1,24 @@
+rule kerberoasting_honey_spn_request {
+  meta:
+    author = "Gabriel Rocha"
+    description = "Detects a successful TGS request for a governed decoy target service principal. Implementation draft; not validated."
+    rule_version = "0.1.0"
+    status = "experimental"
+    validation = "not_compiled_or_tested"
+    platform = "Google Security Operations"
+    data_source = "Windows Security Event 4769"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1558.003"
+    reference = "https://attack.mitre.org/techniques/T1558/003/"
+    severity = "HIGH"
+
+  events:
+    // The STRING reference list must contain target ServiceName values exactly
+    // as they appear in normalized Event 4769 records in this tenant.
+    $e.metadata.product_event_type = "4769"
+    $e.additional.fields["Status"] = "0x0"
+    $e.target.application in %kerberoasting_honey_spns
+
+  condition:
+    $e
+}

@@ -1,0 +1,44 @@
+# T1555.005 — Password Managers
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that detects password manager credential theft using UDM normalized fields.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Chronicle Ingestion API — Windows EDR feeds, Chronicle Forwarder — Sysmon, CrowdStrike, SentinelOne
+# Required Sources: UDM Events (event_type: PROCESS_LAUNCH, FILE_READ)
+# False Positives: Password manager auto-sync or cloud backup agents running under service account identities whose executable paths differ from the standard installation paths used in the exclusion regex (e.g., enterprise-deployed Bitwarden with a custom path), Forensic or eDiscovery tools that open .kdbx or .psafe3 files for evidence collection during authorized investigations where the forensic tool binary is not in the exclusion list, Development or QA environments where password manager databases are used as test fixtures and accessed by test runner processes (pytest, Jest, etc.) that do not match the legitimate application whitelist
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1555.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1555_005_Password_Manager_Credential_Theft {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects password manager credential theft via known attack tools, unauthorized database file access, or memory dumping of password manager processes"
+    reference = "https://attack.mitre.org/techniques/T1555/005/"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1555.005"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+
+  events:
+    (
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        (
+          re.regex($e.target.process.command_line, `(?i)(keethief|keepass2john|kpcli|Find-KeePassConfig|Get-KeePassDatabaseKey|KeePassHax)`) or
+          re.regex($e.target.process.file.full_path, `(?i)(\\keethief|\\keepass2john)`) or
+          re.regex($e.target.process.command_line, `(?i)(procdump.{0,40}keepass|minidump.{0,40}keepass|comsvcs.{0,40}keepass)`)
+        )
+      ) or
+      (
+        $e.metadata.event_type = "FILE_READ" and
+        re.regex($e.target.file.full_path, `(?i)(\.(kdbx|kdb|psafe3|agilekeychain|1pif)$|1Password\.sqlite|KeePass\.config\.xml|LastPass\.sqlite)`) and
+        not re.regex($e.principal.process.file.full_path, `(?i)(KeePass\.exe|1Password\.exe|LastPass\.exe|Bitwarden\.exe|Dashlane\.exe|RoboForm\.exe)`)
+      )
+    )
+
+  condition:
+    $e
+}

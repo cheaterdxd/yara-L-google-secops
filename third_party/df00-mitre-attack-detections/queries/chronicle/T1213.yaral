@@ -1,0 +1,64 @@
+# T1213 — Data from Information Repositories
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting data mining from SharePoint/OneDrive information repositories.
+# Data Sources: Google Chronicle with Microsoft Office 365 log ingestion, Chronicle UDM normalization for O365 Management Activity
+# Required Sources: USER_RESOURCE_ACCESS UDM events
+# False Positives: Automated ETL or reporting pipelines that programmatically access large sets of SharePoint documents on a scheduled basis for business intelligence reporting, Onboarding workflows where new employees or contractors perform initial bulk synchronization of shared document libraries to local devices, Third-party document management integrations (DocuSign, Adobe Sign, Salesforce) that access SharePoint files in bulk during contract processing or CRM synchronization workflows
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1213
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1213_data_from_information_repositories {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects bulk file access/download from SharePoint or OneDrive exceeding 50 operations per hour, sensitive keyword searches, and bulk external sharing — indicators of adversarial data mining from information repositories (T1213)"
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1213"
+    mitre_attack_subtechnique = "T1213.002"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2024-01-01"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+    $e.metadata.product_name = /(?i)sharepoint|onedrive|office 365/
+    $e.target.application = /(?i)sharepoint|onedrive/
+    $e.metadata.product_event_type = /(?i)FileDownloaded|FileSyncDownloadedFull|FileAccessed|FilePreviewed|FileSyncUploadedFull/
+    $e.principal.user.userid = $user
+    $e.metadata.event_timestamp.seconds > 0
+
+  match:
+    $user over 1h
+
+  outcome:
+    $operation_count = count_distinct($e.metadata.product_event_type)
+    $unique_files = count_distinct($e.target.url)
+    $source_ips = array_distinct($e.principal.ip)
+    $risk_level = if($operation_count >= 500, "Critical",
+                   if($operation_count >= 200, "High",
+                   if($operation_count >= 50, "Medium", "Low")))
+
+  condition:
+    #e >= 50
+}
+
+// Companion rule for sensitive keyword searches:
+// rule t1213_sensitive_keyword_search {
+//   meta:
+//     description = "Detects sensitive keyword searches in SharePoint indicative of credential or architecture harvesting"
+//     mitre_attack_technique = "T1213"
+//   events:
+//     $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+//     $e.metadata.product_name = /(?i)sharepoint/
+//     $e.metadata.product_event_type = "SearchQueryPerformed"
+//     $e.target.resource.name = /(?i)password|credential|secret|vpn|api.key|private.key|connection.string|network.diagram|architecture|payroll|salary/
+//     $e.principal.user.userid = $user
+//   match:
+//     $user over 1h
+//   condition:
+//     #e >= 3
+// }

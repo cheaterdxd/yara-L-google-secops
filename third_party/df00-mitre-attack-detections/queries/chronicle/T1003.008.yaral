@@ -1,0 +1,75 @@
+# T1003.008 — /etc/passwd and /etc/shadow
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting unauthorized /etc/shadow file access and password cracking tool execution against Linux credential files.
+# Data Sources: Chronicle UDM (Unified Data Model), Linux auditd forwarded via Chronicle forwarder, Endpoint telemetry via Chronicle ingestion API, Google Chronicle SIEM Linux parsers
+# Required Sources: UDM events (FILE_OPEN, FILE_READ, FILE_COPY, PROCESS_LAUNCH)
+# False Positives: Wrapper scripts around standard account management tools (e.g., custom useradd wrappers) whose process path does not match standard binary paths and therefore are not excluded by the allowlist, Automated patching or configuration drift detection tools (e.g., Puppet bolt, SaltStack) that use Python or Ruby to read /etc/shadow for user state reconciliation on managed nodes, Forensic or incident response toolkits executed by legitimate analysts on compromised hosts — detection is intentional but analysts should correlate with IR ticket context, Container entrypoint scripts that cp /etc/shadow during image layer construction for hardened base image pipelines running on Chronicle-monitored hosts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1003.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1003_008_shadow_file_credential_access {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects unauthorized access to /etc/shadow and related Linux credential files, and execution of password cracking utilities targeting shadow hashes (MITRE T1003.008)"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1003.008"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platform = "Linux"
+    version = "1.0"
+
+  events:
+    (
+      (
+        $e.metadata.event_type = "FILE_OPEN" or
+        $e.metadata.event_type = "FILE_READ" or
+        $e.metadata.event_type = "FILE_COPY"
+      ) and
+      $e.target.file.full_path in (
+        "/etc/shadow",
+        "/etc/shadow-",
+        "/etc/shadow.bak",
+        "/etc/master.passwd",
+        "/etc/security/passwd"
+      ) and
+      not $e.principal.process.file.full_path in (
+        "/usr/bin/passwd",
+        "/usr/sbin/chpasswd",
+        "/usr/sbin/useradd",
+        "/usr/sbin/usermod",
+        "/usr/sbin/chage",
+        "/sbin/login",
+        "/bin/login",
+        "/usr/sbin/newusers"
+      )
+    ) or
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        re.regex($e.target.process.command_line, `(?i)unshadow`) or
+        (
+          re.regex($e.target.process.command_line, `/etc/shadow`) and
+          re.regex($e.target.process.command_line, `/etc/passwd`)
+        ) or
+        (
+          re.regex($e.target.process.file.full_path, `(?i)(john|hashcat)$`) and
+          re.regex($e.target.process.command_line, `(?i)shadow`)
+        ) or
+        (
+          re.regex($e.target.process.file.full_path, `(?i)lazagne`) and
+          re.regex($e.target.process.command_line, `(?i)(shadow|linux|all)`)
+        ) or
+        (
+          re.regex($e.target.process.file.full_path, `(?i)(python[0-9.]?|perl|ruby|cat|cp|scp|bash|sh)$`) and
+          re.regex($e.target.process.command_line, `/etc/shadow`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

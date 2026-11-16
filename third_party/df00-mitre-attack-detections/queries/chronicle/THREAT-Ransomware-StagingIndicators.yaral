@@ -1,0 +1,75 @@
+# THREAT-Ransomware-StagingIndicators — Ransomware Pre-Deployment Staging Indicators
+# Tactic: Impact, Discovery, Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting ransomware pre-deployment staging across four behavioral signals using UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM) — PROCESS_LAUNCH events, Windows Event Logs ingested via Chronicle Forwarder, Endpoint telemetry via Chronicle-integrated EDR (CrowdStrike, SentinelOne, Carbon Black)
+# Required Sources: UDM events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: Enterprise backup platforms (Veeam, Commvault, Veritas NetBackup) that issue vssadmin delete commands to manage VSS shadow storage quota during backup job finalization on backup proxy hosts, Authorized PsExec or PAExec usage by IT operations teams for remote software deployment, OS patch distribution, or incident response tasks across managed endpoints during approved maintenance windows, Security platform onboarding or replacement projects where operations engineers use sc.exe to stop and disable incumbent AV or EDR services before deploying the new endpoint agent
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-Ransomware-StagingIndicators
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule ransomware_staging_indicators {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects ransomware pre-deployment staging: shadow copy deletion, remote execution tool staging, and defense impairment consistent with Akira, Black Basta, Play, and LockBit affiliate TTPs"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Impact, Defense Evasion, Lateral Movement"
+    mitre_attack_technique = "T1490, T1562.001, T1021.002"
+    reference = "NCSC UK 2025 Threat Report"
+    created = "2026-04-24"
+    threat_actors = "Akira, Black Basta, Play, LockBit, Medusa"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.hostname = $hostname
+    $proc.principal.user.userid = $user
+    (
+      // Shadow copy deletion - CRITICAL (T1490)
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)vssadmin[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)(delete|resize|shadowstorage)`)
+      ) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)wmic[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)shadowcopy`) and
+        re.regex($proc.target.process.command_line, `(?i)delete`)
+      ) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)bcdedit[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)(recoveryenabled|bootstatuspolicy|ignoreallfailures)`)
+      ) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)powershell[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)(Delete-ShadowCopy|Win32_ShadowCopy|vssadmin.*delete)`)
+      ) or
+      // Remote execution tool staging - HIGH (T1021.002)
+      re.regex($proc.target.process.file.full_path, `(?i)(psexec|psexec64|paexec|remcom)[.]exe`) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)wmic[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)/node:`) and
+        re.regex($proc.target.process.command_line, `(?i)process call create`)
+      ) or
+      // Defense impairment - HIGH (T1562.001)
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)sc[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)(stop|delete|config)`) and
+        re.regex($proc.target.process.command_line, `(?i)(WinDefend|Sense|MpsSvc|SentinelAgent|CSFalconService|WdFilter|WdNisSvc|SecurityHealthService)`)
+      ) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)taskkill[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)(msmpeng|mssense|csagent|sentinelagent|cbdaemon|mbam)`)
+      ) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)reg[.]exe`) and
+        re.regex($proc.target.process.command_line, `(?i)(DisableAntiSpyware|DisableRealtimeMonitoring)`) and
+        re.regex($proc.target.process.command_line, `(?i)(WinDefend|Windows.Defender|Defender)`)
+      )
+    )
+
+  condition:
+    $proc
+}

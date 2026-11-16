@@ -1,0 +1,37 @@
+# T1043 — Commonly Used Port
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that identifies Windows script interpreters, living-off-the-land binaries, and anomalous system utilities initiating outbound network connections over commonly used service ports.
+# Data Sources: Google Chronicle with Windows endpoint telemetry, Chronicle Unified Data Model (UDM) network events, Endpoint Detection and Response (EDR) forwarding to Chronicle
+# Required Sources: UDM network_connection events
+# False Positives: Enterprise software packaging tools using msiexec.exe to pull installers over HTTPS from internal distribution servers during software deployment windows, IT operations teams running PowerShell scripts that query internal DNS servers or make REST API calls to configuration management endpoints, Developer workstations where build tools like msbuild.exe or csc.exe make outbound connections to package repositories or license servers over standard ports
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1043
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1043_commonly_used_port_lolbin_network {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects script interpreters, LOLBins, and unusual Windows system utilities communicating over commonly used network ports, indicating potential C2 blending or exfiltration evasion."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1043"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1043/"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.target.port in (80, 443, 53, 25, 22, 3389, 135)
+    (
+      re.regex($e.principal.process.file.full_path, `(?i)(powershell|pwsh|cmd|wscript|cscript|mshta|wmic)\.exe$`)
+      or re.regex($e.principal.process.file.full_path, `(?i)(rundll32|regsvr32|certutil|bitsadmin|msbuild|csc|installutil|regasm|regsvcs|ieexec|expand|extrac32|makecab|pcalua|hh|xwizard)\.exe$`)
+      or re.regex($e.principal.process.file.full_path, `(?i)(notepad|calc|mspaint|wordpad|write|winver|charmap|snippingtool)\.exe$`)
+    )
+    not re.regex($e.principal.process.file.full_path, `(?i)(chrome|firefox|msedge|iexplore|microsoftedge|svchost|onedrive|teams|outlook|winlogon|lsass|services|msmpeng|wuauclt|tiworker|wermgr|searchindexer)\.exe$`)
+
+  condition:
+    $e
+}

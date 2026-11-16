@@ -1,0 +1,61 @@
+# T1518.001 — Security Software Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting security software discovery activity.
+# Data Sources: Google Chronicle UDM, Windows Endpoint via Chronicle Forwarder, Sysmon via Chronicle ingestion
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Enterprise IT asset management tools running scheduled WMI queries against SecurityCenter2 to populate CMDB security posture fields for compliance dashboards, Security operations automation scripts querying installed AV/EDR products during automated incident triage workflows to confirm protection is active, Third-party SIEM or XDR onboarding agents that enumerate endpoint security software to configure data sources and telemetry routing during initial deployment
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1518.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule security_software_discovery_t1518_001 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects adversary enumeration of installed security software via WMI SecurityCenter2, PowerShell CIM/WMI queries, process enumeration of known AV/EDR binaries, and registry inspection of security vendor keys — MITRE ATT&CK T1518.001"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1518.001"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.command_line = $cmdline
+    $e.target.process.file.full_path = $image
+    (
+      (
+        re.regex($image, `(?i)\\wmic\.exe$`) and
+        (
+          re.regex($cmdline, `(?i)SecurityCenter`) or
+          re.regex($cmdline, `(?i)(AntiVirusProduct|AntiSpywareProduct|FirewallProduct)`)
+        )
+      ) or
+      (
+        re.regex($image, `(?i)\\(powershell|pwsh)\.exe$`) and
+        (
+          re.regex($cmdline, `(?i)SecurityCenter`) or
+          re.regex($cmdline, `(?i)(AntiVirusProduct|AntiSpywareProduct|FirewallProduct)`) or
+          (
+            re.regex($cmdline, `(?i)(Get-WmiObject|Get-CimInstance|gwmi|gcim|Invoke-WmiMethod)`) and
+            re.regex($cmdline, `(?i)(AntiVirusProduct|AntiSpywareProduct|FirewallProduct|SecurityCenter)`)
+          )
+        )
+      ) or
+      (
+        re.regex($image, `(?i)\\tasklist\.exe$`) and
+        re.regex($cmdline, `(?i)(ekrn|egui|mssense|msmpeng|mbam|mbamservice|avp\.exe|avguard|avgnt|avscan|avastui|avastsvc|bdservicehost|bdredline|bdagent|sophosav|sophossps|savservice|hmpalert|csfalconservice|csagent|falconhost|cbdaemon|carbonblackk|sentinelagent|sentinelservicehost|cylancesvc|taniumclient|xagt|hxtsr)`)
+      ) or
+      (
+        re.regex($image, `(?i)\\reg\.exe$`) and
+        re.regex($cmdline, `(?i)query`) and
+        re.regex($cmdline, `(?i)(WinDefend|Windows.Defender|\\\\ESET|Kaspersky.Lab|McAfee|Sophos|CrowdStrike|Carbon.Black|SentinelOne|Cylance|Symantec|Bitdefender|Malwarebytes|Avast|\\\\AVG)`)
+      )
+    )
+
+  condition:
+    $e
+}

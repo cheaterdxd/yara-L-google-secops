@@ -1,0 +1,47 @@
+rule brute_force_login_detection {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects brute force login attempts: 5+ failed authentications within 60 seconds from the same source IP"
+    severity = "HIGH"
+    priority = "P2"
+    mitre_tactic = "Credential Access"
+    mitre_technique = "T1110"
+    mitre_subtechnique = "T1110.001"
+    reference = "https://attack.mitre.org/techniques/T1110/001/"
+    created = "2024-01-15"
+    version = "1.2"
+
+  events:
+    $failed_auth.metadata.event_type = "AUTHENTICATION"
+    $failed_auth.metadata.product_event_type = /failed|failure|invalid|denied/i
+    $failed_auth.principal.ip = $src_ip
+    $failed_auth.target.user.userid = $target_user
+    (
+      $failed_auth.security_result.action = "BLOCK" or
+      $failed_auth.security_result.action = "FAIL"
+    )
+
+  match:
+    $src_ip over 60s
+
+  condition:
+    #failed_auth > 4
+
+  outcome:
+    $risk_score = max(75)
+    $affected_user = array_distinct($target_user)
+    $source_ip = $src_ip
+    $failure_count = count($failed_auth.metadata.id)
+    $first_attempt = min($failed_auth.metadata.event_timestamp.seconds)
+    $last_attempt = max($failed_auth.metadata.event_timestamp.seconds)
+    $target_hostname = array_distinct($failed_auth.target.hostname)
+    $severity_label = "HIGH"
+    $playbook = "brute_force_response"
+    $ioc_type = "source_ip"
+
+  actions:
+    aggregate(
+      column = "src_ip",
+      group_by = ["src_ip", "target_user"]
+    )
+}

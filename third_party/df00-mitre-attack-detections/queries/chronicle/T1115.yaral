@@ -1,0 +1,56 @@
+# T1115 — Clipboard Data
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting MITRE ATT&CK T1115 clipboard data collection across three behavioral branches: (1) scripting engines (PowerShell, Python, WScript, etc.) invoking known clipboard APIs including Get-Clipboard, win32clipboard, pyperclip, and OpenClipboard; (2) native clipboard utilities (clip.exe, xclip, xsel, pbpaste) spawned from suspicious parent processes; (3) persistent PowerShell clipboard monitoring loops using while/Start-Sleep patterns indicative of malware like Agent Tesla.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Chronicle Endpoint telemetry (CrowdStrike, Carbon Black, SentinelOne forwarders), Chronicle Windows Event Log ingestion
+# Required Sources: UDM events (PROCESS_LAUNCH type)
+# False Positives: Security awareness training tools that demonstrate clipboard hijacking by reading/writing clipboard content during controlled educational exercises on employee workstations, Custom internal tooling that wraps clip.exe or xclip for log collection or report generation pipelines launched from document macros in controlled environments, Browser automation frameworks (Selenium, Playwright) used in QA environments that interact with clipboard during end-to-end test execution
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1115
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1115_clipboard_data_collection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects clipboard data collection via scripting engine API abuse, native clipboard utilities launched from suspicious parent processes, and persistent clipboard monitoring loops (MITRE ATT&CK T1115)"
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1115"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-18"
+
+  events:
+    (
+      // Branch 1: Script engines invoking clipboard APIs
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and (
+          re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|python[0-9]*\.exe|wscript\.exe|cscript\.exe|mshta\.exe|perl\.exe|ruby\.exe|node\.exe)$`)
+        )
+        and (
+          re.regex($e.principal.process.command_line, `(?i)(get-clipboard|getclipboard|openclipboard|getclipboarddata|win32clipboard|pyperclip|clipboard\.paste|system\.windows\.forms\.clipboard|clipboard::gettext|clipboard\.gettext|getopencl ipboardwindow)`)
+        )
+      )
+      or
+      // Branch 2: Native clipboard utilities from suspicious parents
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.principal.process.file.full_path, `(?i)(clip\.exe|xclip|xsel|xdotool|pbpaste)$`)
+        and re.regex($e.principal.process.parent_process.file.full_path, `(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|mshta\.exe|wscript\.exe|cscript\.exe|regsvr32\.exe|rundll32\.exe|msiexec\.exe|python[0-9]*\.exe|perl\.exe|ruby\.exe|node\.exe)$`)
+      )
+      or
+      // Branch 3: Clipboard monitoring loop pattern
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`)
+        and re.regex($e.principal.process.command_line, `(?i)get-clipboard`)
+        and re.regex($e.principal.process.command_line, `(?i)(while|start-sleep|foreach|-loop)`)
+      )
+    )
+
+  condition:
+    $e
+}

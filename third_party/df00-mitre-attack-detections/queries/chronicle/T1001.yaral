@@ -1,0 +1,81 @@
+# T1001 — Data Obfuscation
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules detecting T1001 Data Obfuscation.
+# Data Sources: Chronicle UDM NETWORK_DNS events (from Forwarder, endpoint EDR, or DNS log ingestion), Chronicle UDM NETWORK_HTTP events (from proxy, web gateway, or packet capture feeds), Google Cloud network telemetry via Chronicle Forwarder, CrowdStrike / Carbon Black EDR events normalized to UDM
+# Required Sources: UDM events — metadata.event_type = NETWORK_DNS, UDM events — metadata.event_type = NETWORK_HTTP
+# False Positives: Azure AD tenant-specific SSO flows generate DNS queries for long subdomain chains under *.microsoftonline.com and *.azure.com that can match the 30-character entropy threshold in Rule 1, Security endpoint agents (CrowdStrike Falcon, Carbon Black, SentinelOne) perform regular health-check HTTP callbacks with proprietary User-Agent strings that don't match the browser exclusion pattern in Rule 2, Google reCAPTCHA v3 and Cloudflare Turnstile embed long Base64-encoded challenge tokens in HTTPS request paths during bot-verification flows, matching the URI encoding pattern in Rule 2
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+// T1001: Data Obfuscation — Chronicle YARA-L 2.0 detection rules
+// Two rules covering DNS entropy and HTTP encoding/beaconing vectors
+
+// ============================================================
+// Rule 1: High-entropy DNS subdomain labels
+// Detects RDAT AES-in-subdomain, DNS tunneling, covert channel encoding
+// ============================================================
+rule t1001_data_obfuscation_dns_entropy {
+  meta:
+    author          = "Argus Detection Engineering"
+    description     = "Detects T1001 Data Obfuscation via high-entropy DNS subdomain labels (30+ Base64/hex chars). Matches RDAT AES ciphertext-in-subdomain and DNS-over-HTTPS tunneling C2 channel patterns."
+    mitre_attack_tactic      = "Command and Control"
+    mitre_attack_technique   = "T1001"
+    mitre_attack_subtechnique = "T1001.002"
+    severity        = "HIGH"
+    confidence      = "MEDIUM"
+    version         = "1.0"
+
+  events:
+    $dns.metadata.event_type = "NETWORK_DNS"
+    // First DNS label is 30+ chars of Base64/hex alphabet
+    $dns.network.dns.questions.name = /^[A-Za-z0-9+\/=_\-]{30,}\./
+    // Exclude CDN GUID-style subdomains (CloudFlare, Akamai routing tokens)
+    not $dns.network.dns.questions.name = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/
+    $dns.principal.hostname = $src_hostname
+
+  condition:
+    $dns
+}
+
+// ============================================================
+// Rule 2: Base64-encoded URI path or non-browser HTTP beaconing
+// Covers encoded C2 commands in URL segments and suspicious User-Agents
+// ============================================================
+rule t1001_data_obfuscation_http_encoding {
+  meta:
+    author          = "Argus Detection Engineering"
+    description     = "Detects T1001 Data Obfuscation via Base64-encoded blobs in HTTP request URI paths and non-browser User-Agent strings making outbound connections. Covers StrelaStealer XOR/Base64 POST patterns and TrailBlazer/Ninja C2 URI obfuscation."
+    mitre_attack_tactic      = "Command and Control"
+    mitre_attack_technique   = "T1001"
+    mitre_attack_subtechnique = "T1001.003"
+    severity        = "HIGH"
+    confidence      = "MEDIUM"
+    version         = "1.0"
+
+  events:
+    $http.metadata.event_type = "NETWORK_HTTP"
+    (
+      // Vector A: 40+ contiguous Base64-alphabet chars in request URL path
+      (
+        $http.network.http.request_url = /[A-Za-z0-9+\/]{40,}={0,2}/
+        and not $http.target.hostname = /accounts\.google\.com|login\.microsoftonline\.com|windowsupdate\.com|cdn\.jsdelivr\.net|akamaihd\.net/
+      )
+      or
+      // Vector B: Non-browser / non-standard User-Agent on outbound web port
+      (
+        not $http.network.http.user_agent = /((?i)mozilla|chrome|safari|firefox|edge|curl|python-requests|wget|java|okhttp|axios|go-http-client)/
+        and $http.target.port in [80, 443, 8080, 8443]
+        and $http.network.direction = "OUTBOUND"
+        and $http.network.http.user_agent != ""
+      )
+    )
+    $http.principal.hostname = $src_host
+    $http.target.hostname = $dst_host
+
+  condition:
+    $http
+}

@@ -1,0 +1,92 @@
+# T1543.005 — Container Service
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1543.005 container service persistence and privilege escalation.
+# Data Sources: Google Chronicle UDM - Linux process telemetry, Chronicle Forwarder on container hosts, GCP Cloud Audit Logs (for GKE DaemonSet abuse)
+# Required Sources: UDM entity graph - process events
+# False Positives: Legitimate container orchestration operations by Kubernetes node agents (kubelet) that may use privileged containers for CNI plugins, storage drivers (CSI), or monitoring DaemonSets, Cloud provider managed node bootstrapping processes that temporarily use privileged containers for node initialization and driver installation on GKE, EKS, or AKS clusters, Developer workstations running Docker Desktop or Rancher Desktop where developers routinely use elevated flags for local development and testing environments
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1543.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1543_005_Container_Service_Persistence_Escalation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1543.005 container service abuse including persistence via restart=always, privilege escalation via --privileged/--pid=host/--net=host/--cap-add flags, and host filesystem bind mounts"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1543.005"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(docker|podman|nerdctl)$/
+    (
+      (
+        $e.principal.process.command_line = /(?i)\srun\s/ and
+        (
+          $e.principal.process.command_line = /--restart.{0,3}always/ or
+          $e.principal.process.command_line = /--privileged/ or
+          $e.principal.process.command_line = /--pid[=\s]host/ or
+          $e.principal.process.command_line = /--net[=\s]host/ or
+          $e.principal.process.command_line = /--network[=\s]host/ or
+          $e.principal.process.command_line = /--cap-add[=\s](SYS_ADMIN|ALL)/ or
+          $e.principal.process.command_line = /-v\s+\/[^:]*:\/|--volume\s+\/[^:]*:\// or
+          $e.principal.process.command_line = /--device\s+\/dev\/(mem|kmem)/
+        )
+      ) or
+      (
+        $e.principal.process.command_line = /(?i)\sexec\s/ and
+        $e.principal.process.command_line = /(\/bin\/(bash|sh|zsh)|\s-i\s|sh\s-c)/
+      )
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if($e.principal.process.command_line = /--restart.{0,3}always/, 1, 0) +
+      if($e.principal.process.command_line = /(--privileged|--pid[=\s]host|--net[=\s]host|--network[=\s]host|--cap-add[=\s](SYS_ADMIN|ALL))/, 1, 0) +
+      if($e.principal.process.command_line = /(-v\s+\/[^:]*:\/|--volume\s+\/[^:]*:\/|--device\s+\/dev\/(mem|kmem))/, 1, 0)
+    )
+    $attack_pattern = if(
+      $e.principal.process.command_line = /--restart.{0,3}always/ and
+      $e.principal.process.command_line = /(--privileged|--pid[=\s]host|--net[=\s]host)/,
+      "CRITICAL: Persistent privileged container",
+      if(
+        $e.principal.process.command_line = /--restart.{0,3}always/ and
+        $e.principal.process.command_line = /(-v\s+\/[^:]*:\/|--volume\s+\/[^:]*:\/)/ ,
+        "CRITICAL: Persistent container with host filesystem mount",
+        if(
+          $e.principal.process.command_line = /(--privileged|--pid[=\s]host)/ and
+          $e.principal.process.command_line = /(-v\s+\/[^:]*:\/|--volume\s+\/[^:]*:\/)/ ,
+          "HIGH: Privileged container with root filesystem access",
+          if(
+            $e.principal.process.command_line = /--restart.{0,3}always/,
+            "MEDIUM: Container persistence via restart=always",
+            if(
+              $e.principal.process.command_line = /(--privileged|--pid[=\s]host|--net[=\s]host|--cap-add[=\s](SYS_ADMIN|ALL))/,
+              "HIGH: Container privilege escalation via capability flags",
+              if(
+                $e.principal.process.command_line = /(-v\s+\/[^:]*:\/|--device\s+\/dev\/(mem|kmem))/,
+                "HIGH: Host root filesystem bind mount",
+                "MEDIUM: Interactive shell exec into running container"
+              )
+            )
+          )
+        )
+      )
+    )
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $command_line = $e.principal.process.command_line
+    $container_runtime = $e.principal.process.file.full_path
+
+  condition:
+    $e
+}

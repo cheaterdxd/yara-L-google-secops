@@ -1,0 +1,56 @@
+# T1137.003 — Outlook Forms
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Outlook Forms (T1137.003) persistence across three detection branches using UDM event model: (1) Outlook process spawning shell interpreters during form VBScript/JScript execution, (2) Ruler attack tool execution with forms-specific flags, (3) Outlook initiating external network connections on suspicious ports post-form trigger.
+# Data Sources: Chronicle UDM via Google Workspace / Microsoft 365 integration, Chronicle Endpoint Detection via CrowdStrike or Carbon Black forwarder, Chronicle Sysmon log ingestion via BindPlane or direct forwarder
+# Required Sources: UDM events: PROCESS_LAUNCH, UDM events: NETWORK_CONNECTION
+# False Positives: Legitimate Outlook integrations with enterprise software (CRM, ERP systems) that register COM automation objects launching cmd.exe or PowerShell as child processes, IT-managed Outlook policies that use scripted automation (wscript.exe, cscript.exe) triggered on email receipt for legitimate workflow processing, Cloud sync clients integrated into Outlook (OneDrive, SharePoint) that make external HTTPS connections via Outlook's process space on port 443
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1137.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule outlook_forms_persistence_t1137_003 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1137.003 Outlook Forms persistence: Outlook spawning shells, Ruler tool use, or Outlook external network connections"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1137.003"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-18"
+
+  events:
+    (
+      // Branch 1: Outlook spawning shell interpreters (form VBScript/JScript execution)
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.principal.process.file.full_path, `(?i)outlook\.exe`)
+      and re.regex($e1.target.process.file.full_path,
+        `(?i)(cmd|powershell|wscript|cscript|mshta|rundll32|regsvr32|certutil|msiexec|wmic)\.exe`)
+    )
+    or
+    (
+      // Branch 2: Ruler tool execution
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.target.process.file.full_path, `(?i)ruler\.exe`)
+        or re.regex($e1.target.process.command_line, `(?i)--(forms|homepage|ruler|target)`)
+      )
+    )
+    or
+    (
+      // Branch 3: Outlook external network connection post-trigger
+      $e1.metadata.event_type = "NETWORK_CONNECTION"
+      and re.regex($e1.principal.process.file.full_path, `(?i)outlook\.exe`)
+      and not net.ip_in_range_cidr($e1.target.ip, "10.0.0.0/8")
+      and not net.ip_in_range_cidr($e1.target.ip, "172.16.0.0/12")
+      and not net.ip_in_range_cidr($e1.target.ip, "192.168.0.0/16")
+      and not net.ip_in_range_cidr($e1.target.ip, "127.0.0.0/8")
+      and $e1.target.port in (80, 443, 445, 4444, 8080, 8443)
+    )
+
+  condition:
+    $e1
+}

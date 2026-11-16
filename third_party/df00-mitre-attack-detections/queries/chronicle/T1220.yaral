@@ -1,0 +1,87 @@
+# T1220 — XSL Script Processing
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1220 XSL Script Processing.
+# Data Sources: Google Chronicle UDM, Windows endpoint telemetry via Chronicle forwarder, Sysmon via Chronicle ingestion
+# Required Sources: PROCESS_LAUNCH UDM events
+# False Positives: Enterprise XML processing pipelines that legitimately invoke msxsl.exe for XSLT transformations on internal file servers accessed via UNC paths, System administrators running wmic.exe /FORMAT with organization-approved XSL stylesheets for WMI data formatting, Software deployment frameworks that drop and execute msxsl.exe as part of an XML-driven installation workflow
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1220
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1220_xsl_script_processing {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1220 XSL Script Processing via msxsl.exe execution or wmic.exe /FORMAT abuse (Squiblytwo). Both vectors proxy arbitrary script execution through trusted Windows tooling."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1220"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    platform = "Windows"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.command_line = $cmdline
+
+    (
+      // msxsl.exe execution — any invocation
+      re.regex($e.target.process.file.full_path, `(?i)msxsl\.exe$`)
+
+      or
+
+      // wmic.exe with /FORMAT targeting XSL/remote URLs (Squiblytwo)
+      (
+        re.regex($e.target.process.file.full_path, `(?i)wmic\.exe$`)
+        and
+        re.regex($e.target.process.command_line, `(?i)/format`)
+        and
+        (
+          re.regex($e.target.process.command_line, `(?i)\.xslt?`) or
+          re.regex($e.target.process.command_line, `(?i)https?://`) or
+          re.regex($e.target.process.command_line, `(?i)ftp://`)
+        )
+      )
+    )
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $risk_remote = if(
+      re.regex($cmdline, `(?i)(https?://|ftp://|\\\\\\\\)`), 1, 0
+    )
+    $risk_arbitrary_ext = if(
+      re.regex($cmdline, `(?i)\.(jpeg|jpg|png|gif|txt|dat|bin|log)\s`), 1, 0
+    )
+    $is_squiblytwo = if(
+      re.regex($e.target.process.file.full_path, `(?i)wmic\.exe$`) and
+      re.regex($cmdline, `(?i)/format`), 1, 0
+    )
+    $technique_variant = if(
+      re.regex($e.target.process.file.full_path, `(?i)msxsl\.exe$`) and
+      re.regex($cmdline, `(?i)(https?://|ftp://|\\\\\\\\)`),
+      "msxsl-remote-xsl",
+      if(
+        re.regex($e.target.process.file.full_path, `(?i)msxsl\.exe$`) and
+        re.regex($cmdline, `(?i)\.(jpeg|jpg|png|gif|txt|dat|bin|log)\s`),
+        "msxsl-arbitrary-ext",
+        if(
+          re.regex($e.target.process.file.full_path, `(?i)msxsl\.exe$`),
+          "msxsl-local-xsl",
+          if(
+            $is_squiblytwo = 1 and
+            re.regex($cmdline, `(?i)(https?://|ftp://)`),
+            "squiblytwo-remote",
+            "squiblytwo-local"
+          )
+        )
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,32 @@
+# T1591.002 — Business Relationships
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection for Business Relationships.
+# Data Sources: Google Chronicle SIEM, Endpoint telemetry, DNS logs
+# Required Sources: PROCESS_LAUNCH, DNS
+# False Positives: Authorized OSINT assessments by internal red teams or security consultants, HR teams using professional networking platforms for talent acquisition, Marketing teams conducting authorized competitive intelligence research, Security awareness teams assessing employee digital footprint for training
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1591.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1591_002_recon_tool {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects execution of reconnaissance and OSINT tools"
+    severity = "medium"
+    confidence = "low"
+    mitre_attack = "T1591.002"
+    reference = "https://attack.mitre.org/techniques/T1591/002/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(nmap|masscan|nikto|theharvester|recon-ng|maltego|spiderfoot|dnsenum|arp-scan|zmap)`) or
+      re.regex($e.target.process.command_line, `(?i)(\-sV\s|\-O\s|\-sC\s|dnsenum|whois\s|hunter\.io|shodan)`)
+    )
+
+  condition:
+    $e
+}

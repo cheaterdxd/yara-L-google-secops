@@ -1,0 +1,37 @@
+# T1098.007 — Additional Local or Domain Groups
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting sensitive group membership additions via Chronicle UDM USER_GROUP_MEMBERSHIP_ADD events targeting known privileged groups, or PROCESS_LAUNCH events capturing net.exe/net1.exe with group /add arguments normalized from Windows Security, Sysmon, or EDR telemetry.
+# Data Sources: Windows Security Event Log via Chronicle forwarder, Sysmon via Chronicle forwarder, CrowdStrike Falcon via Chronicle integration, Carbon Black via Chronicle integration
+# Required Sources: UDM normalized events with event_type USER_GROUP_MEMBERSHIP_ADD, UDM normalized events with event_type PROCESS_LAUNCH
+# False Positives: Identity governance platforms such as CyberArk, SailPoint, or BeyondTrust performing automated privileged access lifecycle operations and group assignments, IT operations teams running net.exe commands during bulk user provisioning or deprovisioning following HR system change requests or role transitions, Azure AD Connect or on-premises AD synchronization services that periodically reconcile group memberships between on-premises and cloud directories
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1098.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1098_007_sensitive_group_membership_addition {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects accounts added to sensitive local or domain groups via Windows group change events or net.exe command execution (T1098.007)"
+    severity = "HIGH"
+    mitre_attack_technique = "T1098.007"
+    mitre_attack_tactic = "Persistence"
+    reference = "https://attack.mitre.org/techniques/T1098/007/"
+
+  events:
+    (
+      $e.metadata.event_type = "USER_GROUP_MEMBERSHIP_ADD" and
+      re.regex($e.target.group.group_display_name,
+        `(?i)^(administrators|domain admins|enterprise admins|schema admins|group policy creator owners|remote desktop users|remote management users|network configuration operators|backup operators|account operators|server operators|dnsadmins|dhcp administrators|exchange windows permissions|exchange trusted subsystem|sudoers|wheel|admin)$`)
+    ) or
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($e.target.process.file.full_path, `(?i)\\net1?\.exe$`) and
+      re.regex($e.target.process.command_line, `(?i)(localgroup|group).+/add`)
+    )
+
+  condition:
+    $e
+}

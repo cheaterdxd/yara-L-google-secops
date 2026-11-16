@@ -1,0 +1,56 @@
+# T1480.001 — Environmental Keying
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule for T1480.001 Environmental Keying, detecting hardware fingerprinting behaviors across four branches: WMI hardware serial queries by suspicious callers, wmic UUID/serial enumeration, registry MachineGuid/ProductId access by non-system processes, and DPAPI PowerShell abuse indicative of environmentally-keyed payload key derivation.
+# Data Sources: Google Chronicle UDM, Windows endpoint telemetry forwarded to Chronicle, Sysmon or EDR process and registry events
+# Required Sources: UDM events (PROCESS_LAUNCH, REGISTRY_READ)
+# False Positives: Asset management or inventory tools performing WMI hardware queries for CMDB population, Software licensing systems that bind licenses to hardware serials via MachineGuid reads, PowerShell runbooks in automation pipelines using ProtectedData for credential management
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1480.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1480_001_environmental_keying {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1480.001 Environmental Keying — hardware fingerprinting via WMI serial queries, registry MachineGuid reads, DPAPI PowerShell abuse, and wmic UUID enumeration used for payload key derivation."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1480.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-13"
+
+  events:
+    (
+      // Branch 1: WMI hardware serial query via suspicious caller or PowerShell
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path, `(?i)(wscript\.exe|cscript\.exe|mshta\.exe|regsvr32\.exe|rundll32\.exe|msiexec\.exe|certutil\.exe|wmic\.exe|powershell\.exe|pwsh\.exe)$`)
+      )
+      and re.regex($e1.target.process.command_line, `(?i)(Win32_DiskDrive|Win32_LogicalDisk|Win32_Volume|SerialNumber|VolumeSerialNumber|Win32_ComputerSystemProduct|UUID|IdentifyingNumber)`)
+    )
+    or
+    (
+      // Branch 2: wmic UUID/serial enumeration
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.target.process.file.full_path, `(?i)wmic\.exe$`)
+      and re.regex($e1.target.process.command_line, `(?i)(bios|baseboard|csproduct|computersystemproduct|uuid|serialnumber|identifyingnumber)`)
+    )
+    or
+    (
+      // Branch 3: Registry MachineGuid/ProductId read by non-system process
+      $e1.metadata.event_type = "REGISTRY_READ"
+      and re.regex($e1.target.registry.registry_key, `(?i)(Microsoft\\Cryptography.*MachineGuid|Windows NT\\CurrentVersion.*(ProductId|DigitalProductId))`)
+      and not re.regex($e1.principal.process.file.full_path, `(?i)(svchost\.exe|WmiPrvSE\.exe|lsass\.exe|SearchIndexer\.exe|MsMpEng\.exe|SgrmBroker\.exe|spoolsv\.exe|services\.exe|RuntimeBroker\.exe|taskhostw\.exe)$`)
+    )
+    or
+    (
+      // Branch 4: DPAPI PowerShell keying
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`)
+      and re.regex($e1.target.process.command_line, `(?i)(CryptProtectData|CryptUnprotectData|ProtectedData|System\.Security\.Cryptography\.ProtectedData|Unprotect\(|\[dpapi\]|DPAPI)`)
+    )
+
+  condition:
+    $e1

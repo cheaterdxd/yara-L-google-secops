@@ -1,0 +1,70 @@
+# T1548.001 — Setuid and Setgid
+# Tactic: Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting SUID/SGID abuse across three behavioral patterns: chmod bit manipulation to grant SUID/SGID, find-based enumeration of SUID binaries as attacker reconnaissance, and suspicious execution of root-owned processes from world-writable directories.
+# Data Sources: Chronicle UDM (Unified Data Model), Linux endpoint telemetry forwarded to Chronicle, Google Chronicle SIEM with Linux log ingestion
+# Required Sources: UDM events with event_type PROCESS_LAUNCH
+# False Positives: DevOps automation pipelines (CI/CD) that set SUID bits on utility binaries during build artifact preparation or container image construction, Authorized red team engagements running find-based SUID enumeration as part of privilege escalation testing on agreed scope, Root-privileged monitoring or backup agents legitimately executing from /home directories where their configuration files reside
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1548.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1548_001_setuid_setgid_abuse {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects SUID/SGID bit manipulation via chmod, SUID discovery via find, and suspicious root execution from writable paths on Linux/macOS endpoints. Maps to MITRE ATT&CK T1548.001."
+    mitre_attack_tactic = "Privilege Escalation"
+    mitre_attack_technique = "T1548.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    (
+      // Part 1: chmod setting SUID or SGID bits
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and $e.target.process.file.full_path = /\/chmod$/
+        and (
+          $e.target.process.command_line = /4[0-7]{3}/ nocase or
+          $e.target.process.command_line = /u\+s/ nocase or
+          $e.target.process.command_line = /\+s/ nocase or
+          $e.target.process.command_line = /2[0-7]{3}/ nocase or
+          $e.target.process.command_line = /g\+s/ nocase or
+          $e.target.process.command_line = /6[0-7]{3}/ nocase
+        )
+      )
+      or
+      // Part 2: find discovering SUID/SGID binaries (attacker recon)
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and $e.target.process.file.full_path = /\/find$/
+        and $e.target.process.command_line = /-perm/ nocase
+        and (
+          $e.target.process.command_line = /\+4000/ nocase or
+          $e.target.process.command_line = /-4000/ nocase or
+          $e.target.process.command_line = /\/4000/ nocase or
+          $e.target.process.command_line = /\+2000/ nocase or
+          $e.target.process.command_line = /-2000/ nocase or
+          $e.target.process.command_line = /setuid/ nocase or
+          $e.target.process.command_line = /setgid/ nocase
+        )
+      )
+      or
+      // Part 3: root execution from writable non-standard paths
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and $e.principal.user.userid = "root"
+        and (
+          $e.target.process.file.full_path = /^\/tmp\// or
+          $e.target.process.file.full_path = /^\/var\/tmp\// or
+          $e.target.process.file.full_path = /^\/dev\/shm\// or
+          $e.target.process.file.full_path = /^\/home\//
+        )
+      )
+    )
+
+  condition:
+    $e
+}

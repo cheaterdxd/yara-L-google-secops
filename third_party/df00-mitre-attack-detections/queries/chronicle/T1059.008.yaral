@@ -1,0 +1,47 @@
+# T1059.008 — Network Device CLI
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting MITRE ATT&CK T1059.008 Network Device CLI abuse.
+# Data Sources: Chronicle ingestion feed for Cisco IOS syslog (product family: CISCO_IOS), Chronicle ingestion feed for Cisco ASA syslog (product family: CISCO_ASA), Chronicle ingestion feed for Juniper JunOS syslog (product family: JUNIPER_JUNOS), Chronicle Cisco NX-OS log parser (product family: CISCO_NEXUS), Chronicle universal syslog parser with network device vendor detection
+# Required Sources: UDM events table (Chronicle native storage), Chronicle log ingestion feeds: CISCO_IOS, CISCO_ASA, JUNIPER_JUNOS
+# False Positives: Authorized IT operations teams performing scheduled firmware upgrades — the 'boot system' and 'archive download-sw' commands will appear during approved maintenance windows; suppress by correlating with Chronicle reference lists of maintenance window time ranges, Network automation platforms (Cisco DNA Center, Juniper Apstra, Ansible Tower) that use CLI-based provisioning and generate legitimate configuration commands at scale — maintain a Chronicle entity context allowlist of known automation controller IP addresses, Security Operations teams executing network device audits, running 'show' commands that may appear adjacent to configuration commands in the same CLI session syslog stream, Periodic credential rotation workflows that update 'enable secret' and 'username' entries as part of PAM (Privileged Access Management) system enforcement cycles
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule network_device_cli_t1059_008 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects suspicious network device CLI commands associated with MITRE ATT&CK T1059.008 - Network Device CLI abuse. Monitors for configuration tampering, security control disabling, firmware modification, and privilege escalation commands on Cisco and Juniper network infrastructure."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.008"
+    reference = "https://attack.mitre.org/techniques/T1059/008/"
+    false_positives = "Authorized maintenance, automated backup tools, configuration management systems"
+
+  events:
+    $e.metadata.event_type = "NETWORK_UNCATEGORIZED"
+    $e.metadata.product_name = /(?i)(cisco|juniper|ios|nxos|asa|junos)/
+    (
+      $e.metadata.description = /(?i)(configure terminal|config t)/ or
+      $e.metadata.description = /(?i)(copy running-config|copy startup-config)/ or
+      $e.metadata.description = /(?i)no logging/ or
+      $e.metadata.description = /(?i)no ip access-list/ or
+      $e.metadata.description = /(?i)no service password-encryption/ or
+      $e.metadata.description = /(?i)access-list permit any any/ or
+      $e.metadata.description = /(?i)boot system/ or
+      $e.metadata.description = /(?i)(archive download-sw|copy tftp:|copy ftp:)/ or
+      $e.metadata.description = /(?i)username.*privilege 15/ or
+      $e.metadata.description = /(?i)enable secret/ or
+      $e.metadata.description = /(?i)transport input all/ or
+      $e.metadata.description = /(?i)snmp-server community/ or
+      $e.metadata.description = /(?i)crypto key generate/ or
+      $e.network.session_id = /(?i)(config-if|config-line|config-router)/
+    )
+
+  condition:
+    $e
+}

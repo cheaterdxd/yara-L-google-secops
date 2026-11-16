@@ -1,0 +1,29 @@
+# T1608.003 — Install Digital Certificate
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1608.003 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Web Proxy, Google Workspace
+# Required Sources: NETWORK_HTTP, PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Internal development, test, or lab environments using self-signed certificates for services that should not be exposed externally but are reachable via proxy, Legacy applications with hardcoded certificate subjects that no longer match the current hostname following a server rename or migration, Internal Certificate Authorities (CAs) whose root certificates were not imported into the monitoring infrastructure, causing valid internal certificates to appear self-signed, CDN providers (Cloudflare, Akamai, Fastly) presenting wildcard certificates where the wildcard CN does not exactly match the specific subdomain being accessed, VPN concentrators, reverse proxies, or internal load balancers presenting a shared certificate that does not match every individual backend hostname
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1608.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_stage_capabilities {
+  meta:
+    author = "Argus"
+    description = "Detects staging of capabilities from external infrastructure"
+    severity = "HIGH"
+    technique = "T1608"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    (
+      re.regex($e.target.url, `\.(exe|dll|bin|ps1|bat|vbs|hta|sh|elf)($|\?)`) nocase or
+      re.regex($e.target.hostname, `transfer\.sh|paste\.ee|gofile\.io|anonfiles|temp\.sh`) nocase
+    )
+    $e.principal.process.file.full_path != ""
+  condition:
+    $e
+}

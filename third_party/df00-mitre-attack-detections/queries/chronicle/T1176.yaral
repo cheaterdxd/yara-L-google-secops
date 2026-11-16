@@ -1,0 +1,79 @@
+# T1176 — Software Extensions
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1176 Software Extension abuse across three UDM event types.
+# Data Sources: Google Chronicle with Google Security Operations ingestion, Windows endpoint telemetry forwarded via Chronicle forwarder, Sysmon or EDR events normalized to UDM
+# Required Sources: UDM events (FILE_CREATION, REGISTRY_MODIFICATION, PROCESS_LAUNCH event types)
+# False Positives: Enterprise browser management platforms (Google Workspace Admin, Microsoft Intune) configuring ExtensionInstallForcelist via GPO on managed corporate devices will generate high-volume registry branch alerts, Developer workstations running browser automation or web scraping tools that load unpacked extensions with --load-extension as part of normal test harness execution, Extension packaging pipelines that copy built .crx or .vsix artifacts into local extension directories during build and release processes before publishing to marketplaces
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1176
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1176_software_extension_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1176 Software Extension abuse: suspicious file writes to browser/IDE extension directories, registry forced-install policy modification, and CLI-based extension loading or installation"
+    mitre_attack_technique = "T1176"
+    mitre_attack_tactic = "Persistence"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-19"
+
+  events:
+    (
+      // Branch 1: Suspicious file creation in browser or IDE extension directories
+      $e.metadata.event_type = "FILE_CREATION"
+      and (
+        re.regex($e.target.file.full_path, `(?i)AppData\\Local\\Google\\Chrome\\User Data\\Default\\Extensions\\`)
+        or re.regex($e.target.file.full_path, `(?i)AppData\\Local\\Microsoft\\Edge\\User Data\\Default\\Extensions\\`)
+        or re.regex($e.target.file.full_path, `(?i)AppData\\Roaming\\Mozilla\\Firefox\\Profiles\\.*\\extensions\\`)
+        or re.regex($e.target.file.full_path, `(?i)\.vscode\\extensions\\`)
+        or re.regex($e.target.file.full_path, `(?i)AppData\\Roaming\\Code\\extensions\\`)
+      )
+      and (
+        re.regex($e.target.file.full_path, `(?i)\.(crx|xpi|vsix|js)$`)
+        or re.regex($e.target.file.full_path, `(?i)manifest\.json$`)
+      )
+      and not re.regex($e.principal.process.file.full_path, `(?i)(chrome\.exe|msedge\.exe|firefox\.exe|Code\.exe|brave\.exe|opera\.exe|MicrosoftEdgeUpdate\.exe|GoogleUpdate\.exe|chrome_updater\.exe)$`)
+    )
+    or
+    (
+      // Branch 2: Registry modification for forced extension installation policy
+      $e.metadata.event_type = "REGISTRY_MODIFICATION"
+      and (
+        re.regex($e.target.registry.registry_key, `(?i)ExtensionInstallForcelist`)
+        or re.regex($e.target.registry.registry_key, `(?i)ExtensionInstallAllowlist`)
+        or re.regex($e.target.registry.registry_key, `(?i)ExtensionInstallBlacklist`)
+        or (
+          re.regex($e.target.registry.registry_key, `(?i)\\Extensions\\.`)
+          and (
+            re.regex($e.target.registry.registry_key, `(?i)\\Chrome\\`)
+            or re.regex($e.target.registry.registry_key, `(?i)\\Edge\\`)
+            or re.regex($e.target.registry.registry_key, `(?i)\\Chromium\\`)
+          )
+        )
+      )
+    )
+    or
+    (
+      // Branch 3: CLI-based extension installation or loading
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e.target.process.command_line, `(?i)(--load-extension|--packed-extension|--allow-outdated-plugins)`)
+        or re.regex($e.target.process.command_line, `(?i)code(-insiders)?\s+--install-extension`)
+        or (
+          re.regex($e.target.process.command_line, `(?i)\.vsix`)
+          and re.regex($e.target.process.command_line, `(?i)install`)
+        )
+        or (
+          re.regex($e.target.process.command_line, `(?i)\.crx`)
+          and re.regex($e.target.process.command_line, `(?i)(chrome|edge|brave)`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

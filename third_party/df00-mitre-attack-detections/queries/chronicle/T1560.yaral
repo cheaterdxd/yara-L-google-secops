@@ -1,0 +1,61 @@
+# T1560 — Archive Collected Data
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1560 Archive Collected Data across all four sub-technique patterns using UDM PROCESS_LAUNCH events.
+# Data Sources: Chronicle UDM ingestion from Microsoft Defender for Endpoint (MDE) via Chronicle connector, Sysmon EventCode 1 logs forwarded to Chronicle via Bindplane or direct forwarder, Windows Security EventID 4688 with process command line auditing enabled
+# Required Sources: UDM events table with metadata.event_type = PROCESS_LAUNCH, target.process.file.full_path and target.process.command_line fields populated, principal.process.file.full_path populated for parent process context
+# False Positives: Automated certificate renewal processes on IIS or Exchange servers where certutil.exe performs encoding as part of certificate export workflows — scope the rule to exclude known certificate server hostnames or service account principals, Legitimate macro-enabled Office documents used in HR or Finance that call authorized PowerShell backup scripts for local archive creation — build allowlists on specific document hashes or trusted OU paths in principal.user.department, Red team or penetration testing exercises using the same archive tooling against authorized targets — cross-reference with planned engagement windows from a reference list or suppress by authorized tester accounts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1560
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1560_archive_collected_data {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1560 Archive Collected Data - password-protected archive creation, Office/script spawned archivers, PowerShell .NET compression, and CertUtil encoding used as pre-exfiltration data staging"
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1560"
+    mitre_attack_subtechniques = "T1560.001, T1560.002, T1560.003"
+    severity = "HIGH"
+    risk_score = "75"
+    reference = "https://attack.mitre.org/techniques/T1560/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(7z[ar]?\.exe|rar\.exe|winrar\.exe)$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)\s-hp`) or
+          strings.contains(strings.to_lower($e.target.process.command_line), "-pass") or
+          strings.contains(strings.to_lower($e.target.process.command_line), "-password")
+        )
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(7z[ar]?\.exe|rar\.exe|winrar\.exe)$`) and
+        re.regex($e.principal.process.file.full_path, `(?i)(winword|excel|outlook|powerpnt|mshta|wscript|cscript|mmc|regsvr32|rundll32)\.exe$`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`) and
+        (
+          strings.contains(strings.to_lower($e.target.process.command_line), "compress-archive") or
+          strings.contains(strings.to_lower($e.target.process.command_line), "io.compression") or
+          strings.contains(strings.to_lower($e.target.process.command_line), "gzipstream") or
+          strings.contains(strings.to_lower($e.target.process.command_line), "deflatestream") or
+          strings.contains(strings.to_lower($e.target.process.command_line), "ziparchive")
+        )
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)certutil\.exe$`) and
+        (
+          strings.contains(strings.to_lower($e.target.process.command_line), "-encode") or
+          strings.contains(strings.to_lower($e.target.process.command_line), "-encodehex")
+        )
+      )
+    )
+
+  condition:
+    $e
+}

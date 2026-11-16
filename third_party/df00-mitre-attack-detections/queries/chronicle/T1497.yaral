@@ -1,0 +1,44 @@
+# T1497 — Virtualization/Sandbox Evasion
+# Tactic: Defense Evasion, Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1497 Virtualization/Sandbox Evasion.
+# Data Sources: Chronicle UDM via Google SecOps, Windows endpoint telemetry ingested via Chronicle Forwarder or third-party EDR UDM normalization
+# Required Sources: UDM PROCESS_LAUNCH events with target.process.file.basename and target.process.command_line populated
+# False Positives: VMware ESXi or Workstation host management consoles spawning VMwareHostOpen.exe or vmtoolsd.exe as part of authorized guest VM lifecycle operations — add exclusion rule matching principal.hostname against known hypervisor host inventory, Enterprise software packaging and deployment systems (Microsoft SCCM task sequences, Intune Win32 app wrappers) that call wmic.exe to query Win32_ComputerSystem model and Win32_BIOS serial number for hardware-targeted deployment logic, Security awareness training platforms or malware detonation sandboxes that run commodity malware samples as part of controlled exercises — these will trigger all four detection categories simultaneously and at high frequency from known sandbox hostnames
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1497
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1497_vm_sandbox_evasion {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1497 Virtualization/Sandbox Evasion via WMI hardware queries, VM registry enumeration, and sandbox tool scanning"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1497"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1497/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        $e.target.process.file.basename = /(?i)wmic\.exe/ and
+        $e.target.process.command_line = /(?i)(MSAcpi_ThermalZoneTemperature|Win32_Fan|Win32_ComputerSystem|Win32_BaseBoard|Win32_BIOS)/
+      ) or
+      (
+        $e.target.process.file.basename = /(?i)reg\.exe/ and
+        $e.target.process.command_line = /(?i)(VMware|VirtualBox|VBoxGuest|QEMU|VEN_15AD|VEN_80EE)/
+      ) or
+      (
+        $e.target.process.command_line = /(?i)tasklist/ and
+        $e.target.process.command_line = /(?i)(wireshark|procmon|procexp|fiddler|x64dbg|x32dbg|ollydbg|ida64|idaq|windbg|autoruns|regmon|filemon)/
+      ) or
+      $e.target.process.file.basename = /(?i)(vmtoolsd|vmwaretray|vboxservice|vmusrvc|vmsrvc|qemu-ga|VMwareHostOpen)\.exe/
+    )
+
+  condition:
+    $e
+}

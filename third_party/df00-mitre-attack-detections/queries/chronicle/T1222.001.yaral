@@ -1,0 +1,109 @@
+# T1222.001 — Windows File and Directory Permissions Modification
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule for T1222.001 Windows File and Directory Permissions Modification.
+# Data Sources: Google Chronicle UDM PROCESS_LAUNCH events, Windows Endpoint telemetry via Chronicle Forwarder (Sysmon or EDR), Microsoft Defender for Endpoint via Chronicle integration
+# Required Sources: PROCESS_LAUNCH UDM events
+# False Positives: System administrators running icacls in scheduled tasks or logon scripts to enforce standardized permissions on shared application directories across the fleet, Endpoint security products or DLP agents invoking PowerShell Set-Acl during installation to restrict access to their quarantine or config directories, Windows Server role installation (IIS, SQL Server, AD DS) that temporarily invokes takeown or icacls to reconfigure permissions on service directories
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1222.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1222_001_windows_permission_modification {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1222.001 Windows File and Directory Permissions Modification via icacls, cacls, takeown, attrib, and PowerShell Set-Acl. Covers ransomware-pattern Everyone full-control grants, ACL inheritance removal, system path ownership takeover, and backup infrastructure targeting."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1222.001"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1222/001/"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "IT provisioning scripts, software deployment tools, backup agents"
+    version = "1"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path != ""
+    (
+      // icacls: Everyone full control, inheritance removal, bulk recursive grant, or reset on sensitive paths
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\icacls\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)everyone:(f|full)`) or
+          re.regex($e.target.process.command_line, `(?i)/grant\s+everyone`) or
+          re.regex($e.target.process.command_line, `(?i)/inheritance:[rd]`) or
+          (
+            re.regex($e.target.process.command_line, `(?i)/reset`) and
+            re.regex($e.target.process.command_line, `(?i)(c:\\windows|c:\\system32|c:\\program files|c:\\programdata|\\backup\\|\\recovery\\)`)
+          ) or
+          (
+            re.regex($e.target.process.command_line, `(?i)/grant`) and
+            re.regex($e.target.process.command_line, `(?i)\s/[tT]\s`) and
+            re.regex($e.target.process.command_line, `(?i)\s/[cC]\s`)
+          )
+        )
+      ) or
+      // takeown: system path ownership or recursive takeover
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\takeown\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)\s/[fF]\s`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)(c:\\windows|c:\\system32|c:\\program|c:\\programdata|\\backup|\\recovery)`) or
+          re.regex($e.target.process.command_line, `(?i)\s/[rR]\b`) or
+          re.regex($e.target.process.command_line, `(?i)\s/[aA]\b`)
+        )
+      ) or
+      // cacls: ACL modification
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\cacls\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)everyone`) or
+          re.regex($e.target.process.command_line, `(?i)/[eE]\s+/[gG]`) or
+          re.regex($e.target.process.command_line, `(?i)/[pP]\s`)
+        )
+      ) or
+      // attrib: hiding files in sensitive system paths
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\attrib\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)\+[hH]`) and
+        re.regex($e.target.process.command_line, `(?i)(c:\\windows|c:\\system32|c:\\program files|c:\\programdata)`)
+      ) or
+      // PowerShell: Set-Acl granting Everyone full control
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(set-acl|setaccessrule|addaccessrule)`) and
+        re.regex($e.target.process.command_line, `(?i)(everyone|fullcontrol)`)
+      )
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.target.process.command_line, `(?i)everyone:(f|full)`), 5, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)/inheritance:[rd]`), 2, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)/reset`), 2, 0) +
+      if(re.regex($e.target.process.file.full_path, `(?i)\\takeown\.exe$`) and re.regex($e.target.process.command_line, `(?i)(c:\\windows|c:\\system32|c:\\program|\\backup|\\recovery)`), 3, 0) +
+      if(re.regex($e.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`) and re.regex($e.target.process.command_line, `(?i)(set-acl|addaccessrule)`), 3, 0)
+    )
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_path = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.src.process.file.full_path
+    $is_ransomware_pattern = if(
+      re.regex($e.target.process.command_line, `(?i)everyone:(f|full)`) and
+      re.regex($e.target.process.command_line, `(?i)(\s/[tT]\s|\s/[rR]\b)`),
+      "true", "false"
+    )
+    $is_backup_targeted = if(
+      re.regex($e.target.process.command_line, `(?i)(backup|recovery|shadow|vssadmin|wbadmin)`),
+      "true", "false"
+    )
+
+  condition:
+    $e
+}

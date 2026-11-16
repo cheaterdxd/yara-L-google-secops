@@ -1,0 +1,67 @@
+# T1219 — Remote Access Tools
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Remote Access Tool process launches on Windows endpoints.
+# Data Sources: Chronicle UDM PROCESS_LAUNCH events from Windows endpoint telemetry, Sysmon or EDR forwarded to Chronicle via ingestion pipeline
+# Required Sources: UDM PROCESS_LAUNCH events
+# False Positives: Enterprise environments where ScreenConnect or Atera is centrally deployed and whitelisted for IT operations, End users with personal copies of AnyDesk or TeamViewer installed for home-to-office remote access, Security red team exercises using RustDesk or SimpleHelp to simulate adversary remote access
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1219
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1219_remote_access_tools {
+  meta:
+    author = "df00tech"
+    description = "Detects execution of known Remote Access Tools and RMM software (MITRE ATT&CK T1219). Identifies commercial RMM tools, VNC variants, MSP management agents, and open-source remote access utilities launched on Windows endpoints."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1219"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path != ""
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(teamviewer|teamviewer_service|anydesk|anydesk_service|screenconnect|connectwisecontrol\.client|logmein|lmi_rescue|logmeinrescue|ammyyadmin|aa_v3|supremo|supremoservice|rustdesk|splashtop|ateraagent|ninjaone|ninjaremote|simplehelp|dwrcs|dwrcst|tmate|tvnserver|vncviewer|uvnc_service|winvnc|chrome_remote_desktop|remote_assistance_host)\.exe$`)
+    )
+
+  match:
+    $e.principal.hostname over 15m
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_name = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+    $rat_category = if(
+      re.regex($e.target.process.file.full_path, `(?i)(teamviewer|anydesk|screenconnect|connectwise)`), "Commercial RMM",
+      if(
+        re.regex($e.target.process.file.full_path, `(?i)(vnc|tvnserver|winvnc|uvnc)`), "VNC",
+        if(
+          re.regex($e.target.process.file.full_path, `(?i)(logmein|lmi_rescue)`), "LogMeIn",
+          if(
+            re.regex($e.target.process.file.full_path, `(?i)(ammyy|aa_v3)`), "AmmyyAdmin",
+            if(
+              re.regex($e.target.process.file.full_path, `(?i)(rustdesk|splashtop|supremo)`), "Other RMM",
+              if(
+                re.regex($e.target.process.file.full_path, `(?i)(atera|ninja|simplehelp|dwrcs)`), "MSP Tool",
+                "Unknown"
+              )
+            )
+          )
+        )
+      )
+    )
+    $is_service_launched = if(
+      re.regex($e.principal.process.file.full_path, `(?i)(services\.exe|svchost\.exe)`), "Yes", "No"
+    )
+    $is_user_launched = if(
+      re.regex($e.principal.process.file.full_path, `(?i)(explorer\.exe|cmd\.exe|powershell\.exe)`), "Yes", "No"
+    )
+
+  condition:
+    $e
+}

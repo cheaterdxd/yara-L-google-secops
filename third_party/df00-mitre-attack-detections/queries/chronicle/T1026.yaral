@@ -1,0 +1,52 @@
+# T1026 — Multiband Communication
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule correlating two NETWORK_CONNECTION UDM events within a 10-minute sliding window for the same hostname and process PID: one event targeting port 53 (DNS) and one targeting HTTP/HTTPS ports (80, 443, 8080, 8443).
+# Data Sources: Google Chronicle UDM (Unified Data Model) via Chronicle Forwarder, Chronicle Ingestion API (endpoint telemetry normalized to UDM), Chronicle third-party log ingestion (Sysmon, EDR telemetry normalized to NETWORK_CONNECTION)
+# Required Sources: NETWORK_CONNECTION (Chronicle UDM event type)
+# False Positives: Endpoint management and MDM agents (Microsoft Intune, Jamf, Tanium) that resolve management server hostnames via DNS and then communicate with them over HTTPS for policy enforcement and check-ins, Database connection poolers and ORMs that resolve read-replica or shard endpoints via DNS before establishing HTTPS-tunneled connections within the same connection setup sequence, Cloud-native applications and service mesh sidecars (Envoy, Linkerd) that perform explicit DNS-based service discovery before routing HTTP/HTTPS traffic to resolved upstream endpoints
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1026
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule multiband_c2_communication_t1026 {
+  meta:
+    author = "df00tech"
+    description = "Detects T1026 Multiband Communication: non-browser, non-system process making DNS and HTTP/HTTPS connections within 10 minutes, indicating split-channel C2"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1026"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1026/"
+    platform = "Windows"
+    false_positives = "Software update clients, package managers, enterprise applications with custom DNS resolution logic"
+
+  events:
+    $dns_conn.metadata.event_type = "NETWORK_CONNECTION"
+    $dns_conn.target.port = 53
+    $dns_conn.principal.process.file.full_path != /(?i)(chrome|firefox|msedge|iexplore|brave|opera|safari|svchost|lsass|services|wuauclt|MicrosoftEdgeUpdate)\.exe/
+    not net.ip_in_range_cidr($dns_conn.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($dns_conn.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($dns_conn.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($dns_conn.target.ip, "127.0.0.0/8")
+    $dns_conn.principal.hostname = $hostname
+    $dns_conn.principal.process.pid = $pid
+    $dns_conn.principal.process.file.full_path = $process_path
+
+    $web_conn.metadata.event_type = "NETWORK_CONNECTION"
+    $web_conn.target.port in (80, 443, 8080, 8443)
+    $web_conn.principal.hostname = $hostname
+    $web_conn.principal.process.pid = $pid
+    not net.ip_in_range_cidr($web_conn.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($web_conn.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($web_conn.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($web_conn.target.ip, "127.0.0.0/8")
+
+  match:
+    $hostname, $pid, $process_path over 10m
+
+  condition:
+    $dns_conn and $web_conn
+}

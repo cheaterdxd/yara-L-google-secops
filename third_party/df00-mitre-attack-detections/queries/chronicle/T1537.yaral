@@ -1,0 +1,61 @@
+# T1537 — Transfer Data to Cloud Account
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1537 using the Unified Data Model (UDM).
+# Data Sources: Chronicle Endpoint Telemetry (CrowdStrike, Carbon Black, SentinelOne), Chronicle Windows Event Log ingestion, Sysmon via Chronicle forwarder
+# Required Sources: UDM PROCESS_LAUNCH events
+# False Positives: Authorized AzCopy usage by storage teams replicating data between business units operating in separate Azure subscriptions but within the same enterprise agreement., Infrastructure automation (Terraform, CloudFormation, Pulumi) that creates snapshots or AMIs for golden image distribution to multiple AWS accounts under an Organization., Security engineering teams generating scoped SAS tokens with write access for approved penetration testing exercises or red team engagements with documented change tickets.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1537
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1537_Transfer_Data_To_Cloud_Account {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1537: data exfiltration via cross-account cloud transfer using AzCopy, SAS token generation, snapshot sharing, or MEGA upload tools."
+    severity = "HIGH"
+    mitre_attack_technique = "T1537"
+    mitre_attack_tactic = "Exfiltration"
+    reference = "https://attack.mitre.org/techniques/T1537/"
+    created = "2026-04-20"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.metadata.product_event_type != ""
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[/\\])azcopy(\.exe)?$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)blob\.core\.windows\.net`) or
+          re.regex($e.target.process.command_line, `(?i)mega\.nz`) or
+          re.regex($e.target.process.command_line, `(?i)(megatools|megacopy|megaput)`) or
+          re.regex($e.target.process.command_line, `(?i)s3\.amazonaws\.com`)
+        )
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh|az\.cmd|python)(\.exe)?$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)New-AzStorage(Blob|Container|Account)SASToken`) or
+          re.regex($e.target.process.command_line, `(?i)az storage (blob|container|account) generate-sas`) or
+          re.regex($e.target.process.command_line, `(?i)GenerateSasUri`) or
+          re.regex($e.target.process.command_line, `(?i)generate-sas`)
+        ) and
+        (
+          re.regex($e.target.process.command_line, `(?i)(--expiry|-ExpiryTime|--permissions|rwdl|racwdl)`)
+        )
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh|az\.cmd|aws|python)(\.exe)?$`) and
+        re.regex($e.target.process.command_line, `(?i)(az snapshot (create|grant-access)|az disk create|New-AzSnapshot|Grant-AzSnapshotAccess|ec2 (copy-snapshot|modify-snapshot-attribute|create-image|modify-image-attribute)|CreateSnapshot|CopySnapshot)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(megacopy|megaput|megals|MegaSync|megatools|megacmd|mega-put|mega-copy)(\.exe)?$`) or
+        re.regex($e.target.process.command_line, `(?i)(mega\.nz|megatools|megacopy|megaput|MegaSync)`)
+      )
+    )
+
+  condition:
+    $e
+}

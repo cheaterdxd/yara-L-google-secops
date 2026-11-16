@@ -1,0 +1,42 @@
+# T1003.006 — DCSync
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule that monitors UDM USER_RESOURCE_ACCESS events sourced from Microsoft-Windows-Security-Auditing for Event ID 4662 containing DRSUAPI replication right GUIDs.
+# Data Sources: Windows Security Event Log ingested via Chronicle Forwarder (Windows Event Log collection), Google Cloud Chronicle Ingestion API with Windows Security audit events
+# Required Sources: UDM Events (USER_RESOURCE_ACCESS type, Microsoft-Windows-Security-Auditing product)
+# False Positives: Azure Active Directory Connect and AAD Sync service accounts performing hybrid identity synchronization — these accounts have DS-Replication-Get-Changes rights and trigger Event 4662 on a regular schedule, Active Directory Rights Management Services (AD RMS) or Certificate Services components that enumerate directory information using accounts with replication rights delegated during installation, Enterprise SIEM or UEBA platforms (Splunk UBA, Microsoft Sentinel UEBA, Exabeam) that perform Active Directory enrichment using service accounts with read-access replication permissions
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1003.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule dcsync_drsuapi_replication_abuse {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects DCSync attacks (T1003.006) by monitoring Windows Security Event 4662 for DRSUAPI DS-Replication-Get-Changes and DS-Replication-Get-Changes-All GUIDs on domain objects from non-machine accounts. Covers Mimikatz lsadump::dcsync, Cobalt Strike dcsync, and custom DRSUAPI tooling."
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "TA0006 - Credential Access"
+    mitre_attack_technique = "T1003.006 - OS Credential Dumping: DCSync"
+    false_positives = "Azure AD Connect, AD FS, identity sync tools with replication rights"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+    $e.metadata.product_name = "Microsoft-Windows-Security-Auditing"
+    $e.metadata.product_event_type = "4662"
+    (
+      $e.target.resource.attribute.labels["Object Type"] = "domainDNS"
+      or $e.target.resource.attribute.labels["Object Type"] = "domain"
+    )
+    (
+      $e.target.resource.attribute.labels["Properties"] = /1131f6aa-9c07-11d1-f79f-00c04fc2dcd2/ nocase
+      or $e.target.resource.attribute.labels["Properties"] = /1131f6ad-9c07-11d1-f79f-00c04fc2dcd2/ nocase
+      or $e.target.resource.attribute.labels["Access Mask"] = "0x100"
+    )
+    not $e.principal.user.userid = /\$$/ nocase
+
+  condition:
+    $e
+}

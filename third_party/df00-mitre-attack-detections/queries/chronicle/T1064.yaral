@@ -1,0 +1,60 @@
+# T1064 — Scripting
+# Tactic: Defense Evasion, Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1064 scripting abuse via UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows endpoint telemetry ingested via Chronicle Forwarder, Sysmon events normalized to UDM via Chronicle parsers
+# Required Sources: UDM Events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: Legitimate enterprise macros in Excel or Word that call wscript.exe or cscript.exe for automated document processing, ETL integration, or scheduled reporting tasks in finance or operations environments, IT asset management or endpoint management tools that spawn cmd.exe from Office applications to collect system inventory or push configuration changes via scripted automation, Custom HTA-based internal portals loaded via mshta.exe that reference local intranet URLs matching http:// or https:// patterns or use javascript: navigation handlers
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1064
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1064_scripting_detection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1064 scripting abuse: Office macro child process spawns, suspicious wscript/cscript arguments, MSHTA remote execution, and obfuscated cmd.exe batch chains"
+    severity = "HIGH"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1064"
+    reference = "https://attack.mitre.org/techniques/T1064/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        // Branch 1: Office application spawning script interpreters (macro execution)
+        re.regex($e.principal.process.file.full_path, `(?i)(winword|excel|powerpnt|outlook|onenote|access|visio)\.exe$`) and
+        re.regex($e.target.process.file.full_path, `(?i)(wscript|cscript|mshta|cmd|powershell|pwsh|regsvr32|rundll32)\.exe$`)
+      ) or
+      (
+        // Branch 2: wscript/cscript with suspicious download or COM object arguments
+        re.regex($e.target.process.file.full_path, `(?i)(wscript|cscript)\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)(invoke-expression|iex\(|downloadstring|downloadfile|net\.webclient|createobject|shell\.application|shellexecute|wscript\.shell|http:\/\/|https:\/\/|certutil|bitsadmin)`) or
+          re.regex($e.target.process.command_line, `(?i)\.(vbs|vbe|js|jse|wsf|wsh|hta)\b`)
+        )
+      ) or
+      (
+        // Branch 3: MSHTA loading remote or inline scripts
+        re.regex($e.target.process.file.full_path, `(?i)mshta\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(vbscript:|javascript:|http:\/\/|https:\/\/|\/\/|\\\\)`)
+      ) or
+      (
+        // Branch 4: Cmd.exe with obfuscation patterns or spawned from Office
+        re.regex($e.target.process.file.full_path, `(?i)cmd\.exe$`) and
+        (
+          re.regex($e.principal.process.file.full_path, `(?i)(winword|excel|powerpnt|outlook|onenote|access)\.exe$`) or
+          (
+            re.regex($e.target.process.command_line, `(\^\^|&&|\|\|)`) and
+            re.regex($e.target.process.command_line, `(?i)(certutil|bitsadmin|powershell|wscript|cscript|http)`)
+          )
+        )
+      )
+    )
+
+  condition:
+    $e
+}

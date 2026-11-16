@@ -1,0 +1,49 @@
+# T1218.013 — Mavinject
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting mavinject.exe invocation with /INJECTRUNNING flag or suspicious DLL paths or invocation from script interpreters.
+# Data Sources: Windows Endpoint Telemetry via Chronicle Forwarder, Sysmon logs ingested into Chronicle UDM, Microsoft Defender for Endpoint events via Chronicle integration
+# Required Sources: PROCESS_LAUNCH UDM events
+# False Positives: Microsoft App-V infrastructure in enterprise environments where mavinject.exe is used legitimately to inject virtualized application components, Automated DevOps pipelines that invoke mavinject.exe from PowerShell or cmd.exe scripts during application packaging or compatibility testing, Security orchestration tooling that launches mavinject.exe in sandboxed environments for malware analysis or detonation purposes
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.013
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1218_013_mavinject_injection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects abuse of mavinject.exe (Microsoft Application Virtualization Injector) for DLL injection via /INJECTRUNNING flag. Covers T1218.013 signed binary proxy execution."
+    mitre_attack = "T1218.013"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i).*\\mavinject\.exe$/
+    (
+      $e.target.process.command_line = /(?i).*\/INJECTRUNNING.*/
+      or $e.target.process.command_line = /(?i).*(Temp|AppData|Downloads|Public|Desktop).*/
+      or $e.principal.process.file.full_path = /(?i).*(cmd|powershell|wscript|cscript|mshta|winword|excel)\.exe$/
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if($e.target.process.command_line = /(?i).*\/INJECTRUNNING.*/, 40, 0) +
+      if($e.target.process.command_line = /(?i).*(Temp|AppData|Downloads|Public|Desktop).*/, 30, 0) +
+      if($e.principal.process.file.full_path = /(?i).*(cmd|powershell|wscript|cscript|mshta|winword|excel)\.exe$/, 30, 0)
+    )
+    $hostname = $e.principal.hostname
+    $user = $e.principal.user.userid
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+
+  condition:
+    $e and $risk_score > 0
+}

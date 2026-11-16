@@ -1,0 +1,30 @@
+# T1567.002 — Exfiltration to Cloud Storage
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting large data transfers to cloud storage providers for exfiltration detection.
+# Data Sources: Network Events via Chronicle UDM
+# Required Sources: NETWORK_CONNECTION
+# False Positives: OneDrive, Google Drive, and Dropbox desktop sync clients generating large uploads during normal backup or file sync operations, DevOps pipelines using rclone, azcopy, or gsutil for legitimate CI/CD artifact uploads to cloud storage, Backup software (Veeam, Acronis, BackBlaze) transferring large volumes to cloud-hosted S3-compatible backends, Data engineering workflows using gsutil or AWS CLI to transfer datasets between cloud and on-premise environments, Security tools performing cloud storage integrity checks or automated threat intelligence feeds pulling from S3/GCS
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1567.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule cloud_storage_exfiltration {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects exfiltration to cloud storage (T1567.002)"
+    severity = "HIGH"
+    tactic = "TA0010"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    re.regex($e.target.hostname, `(?i)(dropbox\.com|googleapis\.com|onedrive|box\.com|mega\.nz|wetransfer|mediafire|gofile\.io)`) nocase
+    $e.network.sent_bytes > 10485760
+    not re.regex($e.principal.process.file.full_path, `(?i)(OneDrive|googledrive|dropbox|backup)`) nocase
+
+  condition:
+    $e
+}

@@ -1,0 +1,69 @@
+# T1497.001 — System Checks
+# Tactic: Defense Evasion, Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1497.001 virtualisation and sandbox awareness checks using UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle with Windows Sysmon UDM ingestion, Chronicle with Microsoft Defender for Endpoint process telemetry, Chronicle with Windows Security Event Log (Event ID 4688) via Bindplane or Cribl
+# Required Sources: UDM events of type PROCESS_LAUNCH, target.process.command_line must be populated (requires Sysmon or MDE), principal.process.file.full_path for parent process filtering on Branch 6
+# False Positives: Automated hardware asset inventory scanning (SCCM, Tanium, Qualys) regularly executes wmic.exe Win32_ComputerSystem and Win32_Processor queries; exclude known management endpoints by adding a NOT condition on principal.hostname matching an IOC list of authorised management servers., VMware vSphere/ESXi guest tools (vmtoolsd.exe, VMwareService.exe) query VMware registry keys during service startup and self-update checks; suppress by excluding the VMware Tools installation path in target.process.file.full_path., Security operations engineers running manual host triage with process listing tools (Sysinternals Process Explorer, Process Hacker) will trigger the analysis tool scanning branch — correlate with analyst user accounts or workstation hostnames before creating a case., Build and CI pipeline agents running on cloud VMs may enumerate NumberOfCores and TotalPhysicalMemory to size job execution; tie to known CI service accounts (e.g. jenkins, gitlab-runner) to create a suppression rule.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1497.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1497_001_virtualization_sandbox_evasion_checks {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1497.001 - Adversary system checks to detect virtualization and analysis environments. Covers WMI hardware class queries, VM registry key enumeration, VM guest driver file references, analysis tool scanning, hardware fingerprinting, and anomalous systeminfo execution."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1497.001"
+    mitre_attack_subtechnique = "System Checks"
+    platforms = "Windows"
+    false_positives = "IT asset management, VMware Tools, SCCM hardware inventory"
+    version = "1.0"
+    created = "2026-04-14"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.command_line = $cmdline
+    $e.target.process.file.full_path = $imgpath
+
+    (
+      // Branch 1: wmic.exe querying VM-indicative WMI hardware classes
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(MSAcpi_ThermalZoneTemperature|Win32_Fan|Win32_ComputerSystem|Win32_BIOS|Win32_BaseBoard|Win32_DiskDrive|Win32_PhysicalMemory|Win32_Processor|Win32_VideoController)`)
+      ) or
+      // Branch 2: reg.exe querying VM-specific registry paths
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\reg\.exe$`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(VMware|VirtualBox|VBoxGuest|QEMU|Xen|Hyper-V|VEN_15AD|VEN_80EE|VEN_1AB8)`)
+      ) or
+      // Branch 3: Any process referencing VM guest driver filenames
+      re.regex($e.target.process.command_line,
+        `(?i)(VBoxMouse\.sys|VBoxGuest\.sys|VBoxSF\.sys|vmhgfs\.sys|vmmouse\.sys|vmci\.sys|vboxdisp\.dll|vmGuestLib\.dll)`) or
+      // Branch 4: tasklist/Get-Process filtered for known analysis and debug tools
+      (
+        re.regex($e.target.process.command_line, `(?i)(tasklist|Get-Process)`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(wireshark|procmon|procexp|processhacker|fiddler|x64dbg|x32dbg|ollydbg|ida64|idaq|windbg|autoruns|tcpdump|dumpcap|regmon|filemon|pestudio|dnspy)`)
+      ) or
+      // Branch 5: Hardware fingerprinting commands
+      re.regex($e.target.process.command_line,
+        `(?i)(NumberOfCores|TotalPhysicalMemory|VMwareHostOpen\.exe|Win32_ComputerSystem WHERE Model)`) or
+      // Branch 6: systeminfo.exe with anomalous parent process
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\systeminfo\.exe$`) and
+        not re.regex($e.principal.process.file.full_path,
+          `(?i)(\\cmd\.exe$|\\explorer\.exe$|\\svchost\.exe$|\\powershell\.exe$)`)
+      )
+    )
+
+  condition:
+    $e
+}

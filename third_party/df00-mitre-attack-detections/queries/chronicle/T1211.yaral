@@ -1,0 +1,64 @@
+# T1211 — Exploitation for Defense Evasion
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1211 exploitation for defense evasion.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows Sysmon events forwarded to Chronicle, Windows Security Event Logs via Chronicle ingestion, Endpoint telemetry (CrowdStrike, Carbon Black, Defender for Endpoint) via Chronicle parsers
+# Required Sources: UDM events (process, service log types)
+# False Positives: Security product self-update routines may spawn msiexec.exe or cmd.exe as part of package installation, Security orchestration or MDM platforms may open AV/EDR processes with elevated handles during health checks, Patch management tools restarting security services during maintenance windows will generate SERVICE_MODIFICATION events
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1211
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1211_exploitation_for_defense_evasion {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects exploitation of security software for defense evasion (T1211) via three signals: security process spawning suspicious child, non-system process accessing security process with elevated rights, and security service modification."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1211"
+    severity = "CRITICAL"
+    priority = "HIGH"
+
+  events:
+    // Signal 1: Security software spawning suspicious child process
+    (
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path, `(?i)(MsMpEng|MsSense|SenseCncProxy|SenseIR|csagent|CSFalconService|CSFalconContainer|SentinelAgent|SentinelServiceHost|SentinelStaticEngine|CylanceSvc|CylanceUI|CbDefense|CbDefenseService|MBAMService|sophosssp|SophosSafestore|SAVService|avpui|avguard|aswBoot|AvastSvc)\.exe`)
+        or re.regex($e1.principal.process.file.full_path, `(?i)(cb\.exe|avp\.exe|mbam\.exe|avgnt\.exe)`)
+      )
+      and (
+        re.regex($e1.target.process.file.full_path, `(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msiexec|csc|msbuild|wmic|net|net1|sc)\.exe`)
+      )
+    )
+    or
+    // Signal 2: Non-system process accessing security process with PROCESS_ALL_ACCESS
+    (
+      $e1.metadata.event_type = "PROCESS_OPEN"
+      and (
+        re.regex($e1.target.process.file.full_path, `(?i)(MsMpEng|MsSense|SenseCncProxy|csagent|CSFalconService|SentinelAgent|CylanceSvc|cb\.exe|CbDefense|mbam|sophosssp|SAVService|avp\.exe|avgnt|AvastSvc)\.exe`)
+      )
+      and not (
+        re.regex($e1.principal.process.file.full_path, `(?i)(System|svchost|lsass|csrss|wininit|services|smss|WerFault)\.exe`)
+      )
+      and (
+        $e1.target.process.access_mask = "0x1F0FFF"
+        or $e1.target.process.access_mask = "0x1F1FFF"
+        or $e1.target.process.access_mask = "0x1fffff"
+        or $e1.target.process.access_mask = "0x143A"
+        or $e1.target.process.access_mask = "0x1410"
+      )
+    )
+    or
+    // Signal 3: Security service modified or stopped
+    (
+      $e1.metadata.event_type = "SERVICE_MODIFICATION"
+      and (
+        re.regex($e1.target.resource.name, `(?i)(sense|windefend|falcon|sentinelagent|cylancesvc|cbdefense|mbam|sophosssp|kaspersky|avast|avgnt)`)
+      )
+    )
+
+  condition:
+    $e1
+}

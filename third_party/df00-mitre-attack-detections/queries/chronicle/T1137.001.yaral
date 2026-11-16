@@ -1,0 +1,71 @@
+# T1137.001 — Office Template Macros
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1137.001 Office Template Macro persistence across three behavioral branches using UDM event model: template file creation or modification by non-Office initiating processes, GlobalDotName registry key tampering to redirect Word template loading to attacker-controlled locations, and Office application processes spawning high-risk child process executables upon macro activation.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs (via Chronicle forwarder), Microsoft Defender for Endpoint (via Chronicle integration), Sysmon (via Chronicle forwarder)
+# Required Sources: UDM Events - FILE_MODIFICATION, UDM Events - FILE_CREATION, UDM Events - REGISTRY_MODIFICATION, UDM Events - PROCESS_LAUNCH
+# False Positives: Legitimate macro-enabled template deployment by enterprise IT using scripting tools that write to the Office Templates directory as part of standardized configuration management, Security software or backup agents accessing and modifying Office template files as part of scheduled scanning or versioning operations, Office Online or SharePoint sync clients legitimately modifying local Office template caches, appearing as non-standard Office processes writing to template paths
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1137.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1137_001_office_template_macros {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1137.001 Office Template Macro persistence: writes to Office template files by non-Office processes, GlobalDotName registry modification, or Office spawning suspicious child processes."
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1137.001"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      // Branch 1: Template file write by non-Office process
+      (
+        $e.metadata.event_type = "FILE_MODIFICATION" or
+        $e.metadata.event_type = "FILE_CREATION"
+      ) and
+      (
+        re.regex($e.target.file.full_path, `(?i)(Normal\.dotm|PERSONAL\.XLSB|NormalEmail\.dotm)`) or
+        re.regex($e.target.file.full_path, `(?i)AppData\\Roaming\\Microsoft\\(Templates|Excel\\XLSTART|Word\\STARTUP)`)
+      ) and
+      not re.regex($e.principal.process.file.full_path, `(?i)(winword|excel|powerpnt|outlook|OfficeClickToRun)\.exe`)
+    )
+    or
+    (
+      // Branch 2: GlobalDotName registry key modification
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION" or
+        $e.metadata.event_type = "REGISTRY_CREATION"
+      ) and
+      re.regex($e.target.registry.registry_key, `(?i)Microsoft.*Word.*GlobalDotName`)
+    )
+    or
+    (
+      // Branch 3: Office spawning suspicious child process
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($e.principal.process.file.full_path, `(?i)(winword|excel|powerpnt)\.exe`) and
+      re.regex($e.target.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msiexec)\.exe`)
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if($e.metadata.event_type = "REGISTRY_MODIFICATION" and re.regex($e.target.registry.registry_key, `(?i)GlobalDotName`), 85,
+      if($e.metadata.event_type = "PROCESS_LAUNCH" and re.regex($e.target.process.file.full_path, `(?i)(powershell|mshta|regsvr32)\.exe`), 90,
+      70))
+    )
+    $hostname = $e.principal.hostname
+    $user = $e.principal.user.userid
+    $process_name = $e.target.process.file.full_path
+    $parent_process = $e.principal.process.file.full_path
+    $file_path = $e.target.file.full_path
+    $registry_key = $e.target.registry.registry_key
+
+  condition:
+    $e
+}

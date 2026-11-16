@@ -1,0 +1,31 @@
+rule brute_force_then_successful_login {
+  meta:
+    author = "Bubenik2022"
+    description = "Many failed logins followed by a success for the same user (possible brute force)"
+    severity = "MEDIUM"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1110"
+
+  events:
+    $fail.metadata.event_type = "USER_LOGIN"
+    $fail.security_result.action = "BLOCK"
+    $fail.target.user.userid = $user
+    $fail.principal.ip = $ip
+
+    $ok.metadata.event_type = "USER_LOGIN"
+    $ok.security_result.action = "ALLOW"
+    $ok.target.user.userid = $user
+    $ok.principal.ip = $ip
+
+    $fail.metadata.event_timestamp.seconds < $ok.metadata.event_timestamp.seconds
+
+  match:
+    $user, $ip over 15m
+
+  outcome:
+    $failed_attempts = count($fail.metadata.id)
+    $risk_score = 60
+
+  condition:
+    #fail >= 10 and $ok
+}

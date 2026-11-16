@@ -1,0 +1,70 @@
+# T1553.005 — Mark-of-the-Web Bypass
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1553.005 MOTW bypass across four branches: Zone.Identifier ADS deletion, ADS manipulation with streams.exe or PowerShell, PowerShell disk image mount commands, and process execution from non-system mounted drive letters initiated by explorer.exe or cmd.exe.
+# Data Sources: Google Chronicle, Chronicle Ingestion API, Windows Event Logs via Chronicle forwarder, Sysmon UDM ingestion
+# Required Sources: UDM Events (process_launch, file_deletion)
+# False Positives: Enterprise deployment tools running ISOs on non-C: drives during imaging or provisioning, Legitimate forensic or incident response tools such as FTK or Arsenal Image Mounter operating on mounted volumes, IT administrators using streams.exe for ADS inventory or cleanup tasks as part of hardening procedures, Developers or testers running isolated environments from secondary volumes or VHDs
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1553.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1553_005_motw_bypass {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Mark-of-the-Web bypass via Zone.Identifier ADS deletion, PowerShell disk image mounting, ADS manipulation tools, and execution from mounted volumes — T1553.005"
+    mitre_attack = "T1553.005"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+
+  events:
+    (
+      // Branch 1: Zone.Identifier ADS deletion or stream manipulation via file events
+      $e1.metadata.event_type = "FILE_DELETION"
+      and re.regex($e1.target.file.full_path, `(?i):Zone\.Identifier$`)
+    )
+    or
+    (
+      // Branch 2: ADS manipulation tools — streams.exe or PowerShell Remove-Item Zone.Identifier
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path, `(?i)\\streams(64)?\.exe$`)
+        or (
+          re.regex($e1.principal.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`)
+          and re.regex($e1.target.process.command_line, `(?i)Zone\.Identifier`)
+          and re.regex($e1.target.process.command_line, `(?i)(Remove-Item|-Stream|Clear-Content|Set-Content)`)
+        )
+        or (
+          re.regex($e1.principal.process.file.full_path, `(?i)\\cmd\.exe$`)
+          and re.regex($e1.target.process.command_line, `(?i)Zone\.Identifier`)
+        )
+      )
+    )
+    or
+    (
+      // Branch 3: PowerShell disk image mount
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`)
+      and (
+        re.regex($e1.target.process.command_line, `(?i)(Mount-DiskImage|Mount-VHD)`)
+        or (
+          re.regex($e1.target.process.command_line, `(?i)\.(iso|vhd|vhdx|img)`)
+          and re.regex($e1.target.process.command_line, `(?i)(mount|attach|diskpart)`)
+        )
+      )
+    )
+    or
+    (
+      // Branch 4: Execution from non-C: mounted volume via explorer or cmd
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.target.process.file.full_path, `^[D-Zd-z]:\\.*\.(exe|dll|lnk|js|vbs|hta|bat|cmd|ps1|msi)$`)
+      and re.regex($e1.principal.process.file.full_path, `(?i)\\(explorer|cmd)\.exe$`)
+      and not re.regex($e1.target.process.file.full_path, `(?i)(Program Files|Games|Steam|GOG|Epic Games)`)
+    )
+
+  condition:
+    $e1
+}

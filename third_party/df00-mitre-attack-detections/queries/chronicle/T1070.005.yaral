@@ -1,0 +1,59 @@
+# T1070.005 — Network Share Connection Removal
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two-rule Chronicle YARA-L detection: one broad rule for any net use /delete activity, and a high-confidence critical rule for bulk share removal (net use * /DELETE) consistent with pre-encryption ransomware staging.
+# Data Sources: Google Chronicle UDM, Windows Event Logs via Chronicle forwarder, Sysmon via Chronicle
+# Required Sources: UDM Events - PROCESS_LAUNCH
+# False Positives: Administrative batch scripts executed during shift change or end-of-business that clean up all mapped network drives for security hygiene, Virtual desktop infrastructure (VDI) session teardown processes that automatically disconnect all mapped resources on logoff, Endpoint detection and response (EDR) or DLP agents that disconnect network shares when a data loss policy violation is detected
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1070_005_network_share_connection_removal {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects adversarial network share connection removal via net.exe or net1.exe. Used by RobbinHood, Threat Group-3390, InvisiMole, DUSTTRAP (APT41) for post-exploitation cleanup."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.005"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.principal.process.file.full_path, `(?i).*\\net\.exe$`)
+      or re.regex($e.principal.process.file.full_path, `(?i).*\\net1\.exe$`)
+    )
+    re.regex($e.target.process.command_line, `(?i).*use.*`)
+    (
+      re.regex($e.target.process.command_line, `(?i).*/delete.*`)
+      or re.regex($e.target.process.command_line, `(?i).* /d .*`)
+      or re.regex($e.target.process.command_line, `(?i).*use \\\\\\* .*`)
+    )
+
+  condition:
+    $e
+}
+
+rule t1070_005_bulk_share_removal {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "High-confidence detection for bulk network share removal (net use * /DELETE /Y) — pattern consistent with pre-encryption ransomware behavior."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.005"
+    severity = "CRITICAL"
+    priority = "CRITICAL"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.principal.process.file.full_path, `(?i).*\\net\.exe$`)
+      or re.regex($e.principal.process.file.full_path, `(?i).*\\net1\.exe$`)
+    )
+    re.regex($e.target.process.command_line, `(?i).*use\s+\*\s+.*(/delete|/DELETE).*`)
+
+  condition:
+    $e
+}

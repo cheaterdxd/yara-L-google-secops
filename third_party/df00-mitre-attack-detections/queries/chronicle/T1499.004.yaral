@@ -1,0 +1,67 @@
+# T1499.004 — Application or System Exploitation
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting exploitation-based denial of service via repeated Windows Application Error crashes (Event ID 1000).
+# Data Sources: Windows Application Event Log (Event ID 1000) via Chronicle forwarder or Windows Event Forwarding, Google Chronicle UDM PROCESS_UNCATEGORIZED events with product_event_type=1000, Chronicle Windows Event Log parser (log type: WINEVTLOG or MICROSOFT_WINDOWS)
+# Required Sources: UDM events (PROCESS_UNCATEGORIZED type, product_event_type 1000)
+# False Positives: Containers or VMs running crash-test harnesses (AFL fuzzer, libFuzzer) against locally compiled test targets — these generate high-frequency crash events with genuine exploit exception codes (0xc0000005, 0xc000001d) but against test binaries, not production services., Windows Update or cumulative patch installation causing IIS, SQL Server, or DNS service restarts in rapid succession, with the old process instances generating Event ID 1000 entries during forced teardown., Elastic APM, Dynatrace, or AppDynamics agents hooking into critical service processes and triggering structured exception handling during initialization, producing 0xc0000005 exception codes in application error events that are self-resolving.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1499.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1499_004_exploitation_dos_crash_loop {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects exploitation-based DoS via repeated application crashes with exploit exception codes on critical services (MITRE T1499.004)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1499.004"
+    reference = "https://attack.mitre.org/techniques/T1499/004/"
+    created = "2024-01-01"
+    version = "1.0"
+
+  events:
+    $crash.metadata.event_type = "PROCESS_UNCATEGORIZED"
+    $crash.metadata.product_event_type = "1000"
+    (
+      re.regex(
+        $crash.principal.process.file.full_path,
+        `(?i)(w3wp|inetinfo|httpd|apache2|sqlservr|named|mysqld|postgres|nginx|vsftpd|sshd|lsass|spoolsv|dns\.exe|tomcat)`
+      )
+      OR re.regex(
+        $crash.metadata.description,
+        `(?i)(Exception code:\s*)(0xc0000005|0xc000001d|0xc00000fd|0xc0000409|0xc0000374|0x80000003|0xc0000096)`
+      )
+    )
+    $crash.principal.hostname = $target_host
+    $crash.principal.process.file.full_path = $faulting_app
+
+  match:
+    $target_host, $faulting_app over 30m
+
+  outcome:
+    $crash_count = count_distinct($crash.metadata.event_timestamp.seconds)
+    $exception_codes = array_distinct($crash.metadata.description)
+    $first_crash = min($crash.metadata.event_timestamp.seconds)
+    $last_crash = max($crash.metadata.event_timestamp.seconds)
+    $crash_interval_secs = max($crash.metadata.event_timestamp.seconds) - min($crash.metadata.event_timestamp.seconds)
+    $is_rapid_reexploit = if(
+      count_distinct($crash.metadata.event_timestamp.seconds) >= 3
+      and (max($crash.metadata.event_timestamp.seconds) - min($crash.metadata.event_timestamp.seconds)) <= 1800,
+      true, false
+    )
+    $alert_severity = if(
+      $is_rapid_reexploit = true
+      and re.regex(
+        array_to_string(array_distinct($crash.metadata.description), ","),
+        `(?i)(0xc0000005|0xc000001d|0xc00000fd|0xc0000409|0xc0000374|0x80000003|0xc0000096)`
+      ), "Critical",
+      if(count_distinct($crash.metadata.event_timestamp.seconds) >= 5, "High", "Medium")
+    )
+
+  condition:
+    #crash >= 2
+}

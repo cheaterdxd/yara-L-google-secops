@@ -1,0 +1,69 @@
+# T1204.003 — Malicious Image
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1204.003 Malicious Image indicators across four branches: process launches matching known cryptocurrency miner binary names or mining pool command-line arguments, network connections to known mining pool ports from non-browser processes, DNS resolution of known mining pool domains, and cloud resource creation events from AWS/Azure/GCP indicating instance launch from potentially malicious images.
+# Data Sources: Google Chronicle UDM, Chronicle Ingestion API (Windows endpoints via EDR), Chronicle AWS CloudTrail ingestion, Chronicle Azure Activity Log ingestion, Chronicle GCP Cloud Audit ingestion, Sysmon via Chronicle forwarder
+# Required Sources: UDM Events (PROCESS_LAUNCH), UDM Events (NETWORK_CONNECTION), UDM Events (NETWORK_DNS), UDM Events (USER_RESOURCE_CREATION)
+# False Positives: Internal cloud automation tools that launch EC2, Azure VM, or GCE instances from custom or marketplace images not recognized by well-known publisher allow-lists, causing false positives on the cloud image deployment branch, Legitimate developers working on blockchain or cryptocurrency projects who run mining software locally for testing consensus mechanisms or integration testing, Network appliances or IoT devices communicating over ports in the mining pool range for unrelated protocols (e.g., some industrial control systems use port 4444 for legitimate traffic)
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1204.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1204_003_malicious_image_execution {
+  meta:
+    author = "df00tech"
+    description = "Detects T1204.003 Malicious Image execution via cryptocurrency miner processes, mining pool network connections, or suspicious cloud image deployments"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1204.003"
+    reference = "https://attack.mitre.org/techniques/T1204/003/"
+    rule_version = "1.0"
+
+  events:
+    (
+      // Branch 1: Miner process execution by binary name
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and (
+          re.regex($e.principal.process.file.full_path, `(?i)(xmrig|xmrig-notls|minerd|cpuminer|cryptonight|nbminer|t-rex|lolminer|ethminer|cgminer|bfgminer|claymore|phoenixminer|teamtntbot)(\.|$)`) nocase
+          or re.regex($e.target.process.command_line, `(?i)(stratum\+tcp://|stratum\+ssl://|--donate-level|-o pool\.|xmrpool|supportxmr|minexmr|moneroocean|hashvault|nanopool)`) nocase
+        )
+      )
+      or
+      // Branch 2: Mining pool network connections on known ports
+      (
+        $e.metadata.event_type = "NETWORK_CONNECTION"
+        and $e.target.port in (3333, 3334, 4444, 4445, 14444, 45560, 5555, 8333, 7777, 9999, 13333, 19999)
+        and not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8")
+        and not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12")
+        and not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16")
+        and not net.ip_in_range_cidr($e.target.ip, "127.0.0.0/8")
+        and not re.regex($e.principal.process.file.full_path, `(?i)(chrome|firefox|msedge|brave|opera|iexplore)\.exe$`) nocase
+      )
+      or
+      // Branch 3: DNS resolution for known mining pool domains
+      (
+        $e.metadata.event_type = "NETWORK_DNS"
+        and (
+          re.regex($e.network.dns.questions.name, `(?i)(minexmr\.com|supportxmr\.com|nanopool\.org|f2pool\.com|antpool\.com|pool\.minergate\.com|xmrpool\.eu|hashvault\.pro|moneroocean\.stream|xmr\.pool)`) nocase
+        )
+      )
+      or
+      // Branch 4: Cloud instance launch events (AWS/GCP/Azure)
+      (
+        $e.metadata.event_type = "USER_RESOURCE_CREATION"
+        and (
+          $e.metadata.product_name = "AWS CloudTrail"
+          or $e.metadata.product_name = "Azure Activity"
+          or $e.metadata.product_name = "GCP Cloud Audit"
+        )
+        and re.regex($e.metadata.description, `(?i)(RunInstances|VIRTUALMACHINES/WRITE|compute\.instances\.insert)`) nocase
+      )
+    )
+
+  condition:
+    $e
+}

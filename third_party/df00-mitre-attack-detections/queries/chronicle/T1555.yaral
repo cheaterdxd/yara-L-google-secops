@@ -1,0 +1,37 @@
+# T1555 — Credentials from Password Stores
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting password store credential harvesting via PROCESS_LAUNCH UDM events.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Chronicle Ingestion API — Windows endpoints via Chronicle forwarder, Chronicle EDR telemetry from CrowdStrike, Carbon Black, or Defender ATP
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Privileged Access Workstation (PAW) credential vault agents that legitimately call CredEnumerateW during session setup for just-in-time access workflows., macOS MDM enrollment processes that use `security find-internet-password` to retrieve proxy credentials from keychain during device provisioning., SIEM/SOAR integration agents (Splunk SOAR, Palo Alto XSOAR) that spawn credential retrieval subprocesses when connecting to managed password stores.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1555
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1555_credentials_from_password_stores {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects execution of credential harvesting tools or commands targeting password stores (T1555)"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1555"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path,
+        `(?i)(mimikatz|lazagne|credentialfileview|vaultpasswordview|netpass\.exe|keethief|dumperts|browserpassview|webbrowserpassview|mailpassview|chromiumpassworddecryptor|creddump)`)
+      or re.regex($e.target.process.command_line,
+        `(?i)(cmdkey\s+/list|vaultcmd\s+/listcreds|security\s+dump-keychain|security\s+find-generic-password|security\s+find-internet-password|rundll32.*keymgr\.dll|CryptUnprotectData|CredEnumerateA|CredEnumerateW|SecKeychainFindInternetPassword|dpapi::cred|vault::list|vault::cred)`)
+      or re.regex($e.principal.process.file.full_path,
+        `(?i)(mimikatz|lazagne|credentialfileview|vaultpasswordview|netpass\.exe|keethief|dumperts|browserpassview|webbrowserpassview|mailpassview|chromiumpassworddecryptor|creddump)`)
+    )
+
+  condition:
+    $e
+}

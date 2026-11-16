@@ -1,0 +1,50 @@
+rule privilege_escalation_detection {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects privilege escalation: non-admin accounts executing sudo, gaining SYSTEM privileges, or performing token impersonation"
+    severity = "CRITICAL"
+    priority = "P1"
+    mitre_tactic = "Privilege Escalation"
+    mitre_technique = "T1548"
+    mitre_subtechnique = "T1548.003"
+    reference = "https://attack.mitre.org/techniques/T1548/"
+    created = "2024-01-15"
+    version = "1.3"
+
+  events:
+    (
+      $priv_event.metadata.event_type = "PROCESS_LAUNCH" or
+      $priv_event.metadata.event_type = "USER_PRIVILEGE_ESCALATION" or
+      $priv_event.metadata.event_type = "REGISTRY_MODIFICATION"
+    )
+    $priv_event.principal.user.userid = $initiating_user
+    $priv_event.principal.user.userid != /administrator|SYSTEM|root|svc_/i
+    (
+      $priv_event.target.process.command_line = /sudo\s/i or
+      $priv_event.target.process.command_line = /runas\s/i or
+      $priv_event.target.process.command_line = /psexec/i or
+      $priv_event.target.process.command_line = /token.*impersonat/i or
+      $priv_event.security_result.description = /privilege.*escalat/i or
+      $priv_event.target.user.windows_sid = /S-1-5-18/ or
+      $priv_event.extensions.auth.auth_details = /SeDebugPrivilege|SeTcbPrivilege|SeImpersonatePrivilege/i
+    )
+    $priv_event.target.hostname = $target_host
+
+  match:
+    $initiating_user, $target_host over 5m
+
+  condition:
+    #priv_event >= 1
+
+  outcome:
+    $risk_score = max(95)
+    $escalating_user = $initiating_user
+    $affected_host = $target_host
+    $command_line = array_distinct($priv_event.target.process.command_line)
+    $privilege_type = array_distinct($priv_event.extensions.auth.auth_details)
+    $event_count = count($priv_event.metadata.id)
+    $severity_label = "CRITICAL"
+    $playbook = "privilege_escalation_response"
+    $ioc_type = "user_account"
+    $containment_action = "disable_account"
+}

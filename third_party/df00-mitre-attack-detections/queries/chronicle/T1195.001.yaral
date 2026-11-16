@@ -1,0 +1,68 @@
+# T1195.001 — Compromise Software Dependencies and Development Tools
+# Tactic: Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1195.001 supply chain compromise across three detection arms using UDM normalized events: (1) package manager processes (npm, pip, yarn, gem, cargo, dotnet, go) or lifecycle hook command patterns spawning suspicious OS-level child processes (PowerShell, cmd, LOLBins) or executing commands with reverse shell/download indicators; (2) package manager processes making outbound NETWORK_CONNECTION events to destinations outside the known-good registry allowlist, covering both typosquatted package registry hijacking and malicious postinstall C2 beaconing; (3) FILE_CREATION events targeting GitHub Actions workflow directories, GitLab CI, Jenkinsfile, Azure Pipelines, and common build configuration files indicating CI/CD pipeline poisoning.
+# Data Sources: Chronicle UDM Events (PROCESS_LAUNCH, NETWORK_CONNECTION, FILE_CREATION), Google Chronicle SIEM, EDR telemetry ingested via Chronicle forwarder, Sysmon via Chronicle Windows forwarder
+# Required Sources: UDM Events — PROCESS_LAUNCH, UDM Events — NETWORK_CONNECTION, UDM Events — FILE_CREATION
+# False Positives: Native npm package compilation via node-gyp will trigger Arm 1 when node.exe spawns cmd.exe or sh to invoke C/C++ compilers during postinstall — add known developer workstation hostnames or build agent principals to an exception list, or filter on process.command_line patterns matching known compiler invocations (cl.exe, gcc, make), Trusted dependency management automation (Dependabot, Renovate Bot, GitHub Actions bot) regularly creates and modifies workflow YAML files and build configurations as part of automated dependency update PRs — correlate Arm 3 hits against known automation service account principal.user.userid values, Corporate package proxy servers (Artifactory, Nexus, Verdaccio) used as internal npm/pip/gem mirrors will generate Arm 2 hits when package manager processes connect to internal proxy hostnames not included in the external registry allowlist — extend the negative regex in Arm 2 with known internal proxy domain patterns
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1195.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1195_001_supply_chain_compromise {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1195.001 supply chain compromise: package manager hook abuse spawning suspicious processes, unexpected external registry connections, and CI/CD pipeline file modifications"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1195.001"
+    mitre_attack_technique_name = "Compromise Software Dependencies and Development Tools"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    platform = "Windows, Linux, macOS"
+    data_sources = "EDR, Process Telemetry, File Monitoring, Network Telemetry"
+    version = "1.0"
+
+  events:
+    (
+      // Arm 1a: Package manager process spawning suspicious OS-level child process
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path,
+          `(?i)(npm\.cmd|npm\.exe|node\.exe|pip\.exe|pip3\.exe|python\.exe|python3\.exe|pipx\.exe|yarn\.exe|pnpm\.exe|gem\.exe|bundle\.exe|cargo\.exe|go\.exe|nuget\.exe|dotnet\.exe)$`)
+        or re.regex($e1.principal.process.command_line,
+          `(?i)(postinstall|preinstall|install\.js|setup\.py|node-pre-gyp)`)
+      )
+      and (
+        re.regex($e1.target.process.file.full_path,
+          `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|curl\.exe|wget\.exe)$`)
+        or re.regex($e1.target.process.command_line,
+          `(?i)(/dev/tcp|base64 -d|base64 --decode|bash -i|sh -i|nc -e|ncat -e|python -c|perl -e|ruby -e|DownloadString|DownloadFile|Invoke-Expression|IEX\(|curl http|wget http|--registry http)`)
+      )
+    )
+    or
+    (
+      // Arm 2: Package manager process making unexpected external network connection
+      $e1.metadata.event_type = "NETWORK_CONNECTION"
+      and re.regex($e1.principal.process.file.full_path,
+        `(?i)(npm\.cmd|npm\.exe|node\.exe|pip\.exe|pip3\.exe|python\.exe|python3\.exe|yarn\.exe|pnpm\.exe|gem\.exe|bundle\.exe|cargo\.exe|go\.exe)$`)
+      and $e1.network.direction = "OUTBOUND"
+      and not re.regex($e1.target.hostname,
+        `(?i)(registry\.npmjs\.org|pypi\.org|files\.pythonhosted\.org|rubygems\.org|crates\.io|nuget\.org|pkg\.go\.dev|proxy\.golang\.org|yarnpkg\.com|registry\.yarnpkg\.com)`)
+    )
+    or
+    (
+      // Arm 3: CI/CD pipeline configuration file creation or modification
+      $e1.metadata.event_type = "FILE_CREATION"
+      and (
+        re.regex($e1.target.file.full_path,
+          `(?i)(\.github/workflows|\.gitlab-ci|Jenkinsfile|\.circleci|\.travis|azure-pipelines)`)
+        or re.regex($e1.target.file.full_path,
+          `(?i)(Makefile|CMakeLists\.txt|build\.gradle|pom\.xml)$`)
+      )
+    )
+
+  condition:
+    $e1
+}

@@ -1,0 +1,82 @@
+# T1069.001 — Local Groups
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting local group enumeration (T1069.001) using UDM process launch events.
+# Data Sources: Chronicle UDM (Unified Data Model) PROCESS_LAUNCH events, Google Chronicle Forwarder ingesting Windows Event Logs, Chronicle Forwarder ingesting Sysmon XML events, Chronicle UDM normalization of Linux auditd execve events
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: System administrators using net localgroup or PowerShell Get-LocalGroupMember as part of documented operational runbooks for access reviews, Domain join and provisioning automation that validates local Administrators group membership post-build to confirm GPO application, Backup software agents (e.g., Veeam, Commvault) that enumerate local Backup Operators group membership at startup to verify required permissions
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1069.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1069_001_local_group_enumeration {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects local group enumeration consistent with MITRE ATT&CK T1069.001. Identifies net localgroup, PowerShell Get-LocalGroup/Get-LocalGroupMember, WMIC group queries, macOS dscl Groups listing, and Linux groups/id/getent commands, especially when targeting privileged groups or spawned from suspicious parent processes."
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1069.001"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      // Windows net.exe / net1.exe localgroup
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(\\net\.exe|\\net1\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)localgroup`)
+      ) or
+      // PowerShell Get-LocalGroup / Get-LocalGroupMember
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(\\powershell\.exe|\\pwsh\.exe)$`) and
+        re.regex($e.target.process.command_line, `(?i)(get-localgroup|get-localgroupmember|localgroup)`)
+      ) or
+      // WMIC group query
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(\bgroup\b|localgroup)`)
+      ) or
+      // macOS dscl Groups listing
+      (
+        re.regex($e.target.process.file.full_path, `(?i)/dscl$`) and
+        re.regex($e.target.process.command_line, `(?i)Groups`)
+      ) or
+      // Linux: groups, getent group
+      (
+        re.regex($e.target.process.file.full_path, `(?i)/(groups|getent)$`) and
+        re.regex($e.target.process.command_line, `(?i)group`)
+      ) or
+      // Linux: id -Gn
+      (
+        re.regex($e.target.process.file.full_path, `(?i)/id$`) and
+        re.regex($e.target.process.command_line, `(?i)(-G|-Gn)`)
+      )
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(
+        re.regex($e.target.process.command_line, `(?i)(administrators|backup operators|remote desktop|power users|network configuration)`),
+        40, 0
+      ) +
+      if(
+        re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|python\.exe|python3|bash|/sh|zsh)$`),
+        35, 0
+      ) +
+      if(
+        re.regex($e.target.process.command_line, `(?i)(get-localgroup|get-localgroupmember)`),
+        25, 0
+      )
+    )
+    $target_cmd = array_distinct($e.target.process.command_line)
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+
+  condition:
+    $e
+}

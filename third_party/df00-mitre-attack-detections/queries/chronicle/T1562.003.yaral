@@ -1,0 +1,48 @@
+# T1562.003 — Impair Command History Logging
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1562.003 command history tampering.
+# Data Sources: Chronicle UDM (Unified Data Model) process events, Google Workspace Chronicle ingestion, VirusTotal Enterprise Chronicle integration, Endpoint EDR logs forwarded to Chronicle
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate security hardening automation that configures HISTCONTROL=ignorespace as part of CIS benchmark Level 1 Linux baseline implementation across managed server fleets, Cloud-init or user-data scripts on AWS/GCP/Azure instances that unset HISTFILE during first-boot configuration to avoid recording bootstrap credentials in persistent shell history, Red team simulation platforms (Atomic Red Team, VECTR) running T1562.003 atomic tests in authorized purple team exercises
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1562.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule impair_command_history_logging {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1562.003 - Impair Command History Logging. Adversaries manipulate shell history environment variables, delete/redirect history files, or modify PSReadLine settings to hide executed commands."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1562.003"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.command_line = $cmdline
+    (
+      re.regex($e.target.process.command_line, `(?i)unset\s+HISTFILE`) or
+      re.regex($e.target.process.command_line, `(?i)HISTFILE=\/dev\/null`) or
+      re.regex($e.target.process.command_line, `(?i)HISTFILESIZE=0`) or
+      re.regex($e.target.process.command_line, `(?i)HISTSIZE=0`) or
+      re.regex($e.target.process.command_line, `(?i)HISTCONTROL=(ignoreboth|ignorespace)`) or
+      re.regex($e.target.process.command_line, `(?i)set\s+\+o\s+history`) or
+      re.regex($e.target.process.command_line, `(?i)history\s+-c`) or
+      re.regex($e.target.process.command_line, `(?i)history\s+-w\s+\/dev\/null`) or
+      re.regex($e.target.process.command_line, `(?i)Set-PSReadline[Oo]ption.*SaveNothing`) or
+      re.regex($e.target.process.command_line, `(?i)Set-PSReadLine[Oo]ption.*HistorySavePath`) or
+      re.regex($e.target.process.command_line, `(?i)Remove-Item.*ConsoleHost_history`) or
+      re.regex($e.target.process.command_line, `(?i)del.*ConsoleHost_history`) or
+      (
+        re.regex($e.target.process.command_line, `(?i)(rm\s+-[rf]+|truncate\s+-s\s+0|ln\s+-sf\s+/dev/null)`) and
+        re.regex($e.target.process.command_line, `(?i)(bash_history|zsh_history|fish_history)`)
+      )
+    )
+
+  condition:
+    $e
+}

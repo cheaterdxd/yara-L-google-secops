@@ -1,0 +1,39 @@
+# T1539 — Steal Web Session Cookie
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting non-browser processes performing file open operations against browser session cookie stores and saved credential databases across Chrome, Edge, Firefox, Brave, Opera, and Vivaldi.
+# Data Sources: Google Chronicle UDM, Windows endpoint telemetry forwarded to Chronicle, Sysmon logs ingested via Chronicle forwarder
+# Required Sources: UDM events with event_type FILE_OPEN
+# False Positives: Google Chrome or Edge update processes (GoogleUpdate.exe, MicrosoftEdgeUpdate.exe) that access User Data directories during in-place browser updates — add update helper executables to the exclusion regex, Enterprise password manager integrations (e.g., LastPass binary component, Keeper desktop app) that read browser cookie directories to detect active sessions for autofill context, System imaging or forensic tools run by IT administrators during incident response or routine audits — these should be detected but triaged as authorized activity
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1539
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1539_steal_web_session_cookie {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects non-browser processes accessing browser session cookie stores or credential databases, indicating potential session cookie theft (T1539)"
+    severity = "HIGH"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1539"
+    reference = "https://attack.mitre.org/techniques/T1539/"
+    version = "1.0"
+
+  events:
+    $file_access.metadata.event_type = "FILE_OPEN"
+    $file_access.principal.hostname = $hostname
+    $file_access.principal.process.file.full_path = $proc_path
+    (
+      re.regex($file_access.target.file.full_path,
+        `(?i)(Chrome.User Data|Edge.User Data|Firefox.Profiles|BraveSoftware.Brave-Browser|Opera.Software.Opera.Stable|Vivaldi.User Data)`) and
+      re.regex($file_access.target.file.full_path,
+        `(?i)([\\/]Cookies$|cookies\.sqlite(-wal)?$|[\\/]Local State$|[\\/]Login Data$)`)
+    )
+    not re.regex($file_access.principal.process.file.full_path,
+      `(?i)(\\chrome\.exe|\\msedge\.exe|\\firefox\.exe|\\brave\.exe|\\opera\.exe|\\vivaldi\.exe|\\chromium\.exe|\\msedgewebview2\.exe|\\MsMpEng\.exe|\\SearchIndexer\.exe|\\SgrmBroker\.exe|\\backgroundTaskHost\.exe|\\WerFault\.exe|\\svchost\.exe|\\TiWorker\.exe|\\TrustedInstaller\.exe)`)
+
+  condition:
+    $file_access
+}

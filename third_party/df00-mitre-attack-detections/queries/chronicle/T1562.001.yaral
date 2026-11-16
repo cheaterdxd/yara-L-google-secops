@@ -1,0 +1,50 @@
+# T1562.001 — Disable or Modify Tools
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting security tool tampering events by correlating UDM process launch events for service control commands, forced process termination, and PowerShell-based Windows Defender policy modifications targeting known AV/EDR products (T1562.001).
+# Data Sources: Google Chronicle UDM, Windows Endpoint Detection (via Chronicle forwarder), Sysmon ingested via Chronicle
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate enterprise AV/EDR management consoles performing remote service restarts or configuration changes as part of normal operations, Security operations runbooks that automate Defender exclusion management for specific application directories after change approval, IT automation platforms deploying new endpoint agents that must first decommission the existing agent before installation
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1562.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1562_001_disable_security_tools {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects attempts to disable or modify security tools including AV/EDR services, processes, and Defender policies (T1562.001)"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1562.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+
+    (
+      // Service control against security services
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(\\sc\.exe|\\net\.exe|\\net1\.exe)$`)
+        and re.regex($e.target.process.command_line, `(?i)(stop|delete|config)`)
+        and re.regex($e.target.process.command_line, `(?i)(windefend|sense|msmpsvc|wdnissvc|securityhealth|wscsvc|crowdstrike|csfalcon|cylance|cbdefense|sentinelagent|taniumclient)`)
+      )
+      or
+      // Taskkill targeting security tool processes
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)\\taskkill\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(msmpeng|mssense|csfalcon|cylancesvc|cbdefense|sentinelagent|taniumclient|securityhealth|sentinelservicehost|tmabc|coreserviceshell)`)
+      )
+      or
+      // PowerShell Defender policy modification
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(\\powershell\.exe|\\pwsh\.exe)$`)
+        and re.regex($e.target.process.command_line, `(?i)(set-mppreference|add-mppreference)`)
+        and re.regex($e.target.process.command_line, `(?i)(disablerealtimemonitoring|disablebehaviormonitoring|disableioavprotection|disablescriptscanning|exclusionpath|exclusionprocess|disableblockatfirstseen|disableantispyware)`)
+      )
+    )
+
+  condition:
+    $e
+}

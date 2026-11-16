@@ -1,0 +1,38 @@
+# T1059.007 — JavaScript
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting JavaScript interpreter abuse across all major execution vectors — JScript via wscript/cscript, MSHTA-based payloads, Node.js execution, and macOS JXA via osascript — with pattern matching on command-line indicators associated with T1059.007 threat actor TTPs.
+# Data Sources: Google Chronicle UDM, Windows Endpoint, macOS Endpoint, Sysmon via Chronicle Ingestion
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate business scripting using WScript or CScript for software deployment, network share enumeration, or Help Desk automation tools, Node.js web frameworks such as Express or Electron-based desktop applications invoking shell commands for system interaction, macOS developer workflows using osascript with JavaScript for Automator actions, Alfred workflows, or Raycast extensions
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1059_007_javascript_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects JavaScript interpreter abuse via wscript.exe, cscript.exe, mshta.exe, node.exe, or osascript with suspicious command-line patterns. Covers JScript, Node.js, and macOS JXA execution vectors used by threat actors including APT32, TA505, and FIN6."
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.007"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(wscript\.exe|cscript\.exe|mshta\.exe|node\.exe|osascript)$/
+    (
+      $e.principal.process.command_line = /(?i)\.(js|jse|wsf|hta)(\s|"|'|$)/ or
+      $e.principal.process.command_line = /(?i)(activexobject|wscript\.createobject|getobject)/ or
+      $e.principal.process.command_line = /(?i)(wscript\.shell|shell\.application)/ or
+      $e.principal.process.command_line = /(?i)(adodb\.stream|msxml2\.xmlhttp|winhttp\.winhttprequest)/ or
+      $e.principal.process.command_line = /(?i)(eval\(|new function\(|runhtmlapplication)/ or
+      $e.principal.process.command_line = /(?i)(certutil|bitsadmin|powershell|cmd\.exe|cmd\s+\/c)/ or
+      $e.principal.process.command_line = /(?i)(-l javascript|scriptengine|javascript:)/
+    )
+
+  condition:
+    $e
+}

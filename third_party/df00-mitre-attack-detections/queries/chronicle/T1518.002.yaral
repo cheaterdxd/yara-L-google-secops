@@ -1,0 +1,74 @@
+# T1518.002 — Backup Software Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting backup software discovery (T1518.002) via UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle UDM (PROCESS_LAUNCH events), Windows Sysmon via Chronicle ingestion, Microsoft Defender for Endpoint via Chronicle ingestion, CrowdStrike Falcon via Chronicle ingestion
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Backup administrators using PowerShell scripts with Get-Service or Get-CimInstance to validate backup agent health across a fleet of servers as part of routine operations, Enterprise monitoring tools such as SolarWinds, Datadog, or PRTG that execute WMI or registry queries to collect backup software metrics and service availability, Active Directory Group Policy or SCCM compliance scripts that enumerate installed backup software during periodic machine compliance assessments
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1518.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule backup_software_discovery_t1518_002 {
+  meta:
+    author = "df00tech"
+    description = "Detects backup software discovery (MITRE ATT&CK T1518.002) — pre-ransomware reconnaissance targeting Veeam, Acronis, Commvault, Arcserve, Carbonite, Barracuda, and Windows Backup utilities via registry query, service enumeration, WMI, PowerShell, tasklist, and directory listing."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1518.002"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1518/002/"
+    reference = "Wizard Spider FIN12 Get-DataInfo.ps1 script; pre-ransomware backup destruction pattern"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path != ""
+
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])reg\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)query`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|commvault|arcserve|paragon|cobian|backupassist|windowsbackup)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])sc\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)query`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|backup|commvault|arcserve|wbengine|sdrsvc)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])net1?\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)start`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|backup|commvault|arcserve|carbonite|wbengine)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])wmic\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(product|process|service)`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|backup|commvault|arcserve|carbonite|crashplan|barracuda|datto|zerto|veritas|wbadmin|ntbackup)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(get-datainfo|get-service|get-itemproperty|get-wmiobject|get-ciminstance)`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|backup|commvault|carbonite|crashplan|barracuda|datto|zerto|veritas|wbadmin)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])tasklist\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|backup|commvault|carbonite|crashplan|barracuda)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(^|[\\/])cmd\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)\bdir\b`) and
+        re.regex($e.target.process.command_line, `(?i)(veeam|acronis|backup|commvault|arcserve|carbonite)`)
+      )
+    )
+
+    $hostname = $e.principal.hostname
+    $user = $e.principal.user.userid
+    $process = $e.target.process.file.full_path
+    $cmdline = $e.target.process.command_line
+
+  condition:
+    $e
+}

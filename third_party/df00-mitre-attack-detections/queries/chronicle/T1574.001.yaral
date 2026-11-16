@@ -1,0 +1,41 @@
+# T1574.001 — DLL
+# Tactic: Persistence, Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1574.001 DLL hijacking by matching PROCESS_MODULE_LOAD events where a trusted process (System32, SysWOW64, or Program Files) loads an unsigned or invalidly-signed DLL from a suspicious writable path such as AppData, ProgramData, or Windows\Temp.
+# Data Sources: Google Chronicle UDM, Windows Endpoint Telemetry, Sysmon via Chronicle forwarder
+# Required Sources: PROCESS_MODULE_LOAD UDM events
+# False Positives: Enterprise deployment tools that stage self-signed or internally-signed DLLs in ProgramData before a System32 process loads them as part of a sanctioned deployment workflow, Remote monitoring and management (RMM) agents that operate from non-standard paths and load helper modules under a trusted parent process context, Browser extension mechanisms or plugin frameworks where a signed browser loads extension DLLs from user profile AppData directories
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1574.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1574_001_dll_hijacking_sideloading {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects DLL search order hijacking or side-loading where a trusted high-integrity process loads an unsigned or suspicious DLL from a user-writable path (T1574.001)"
+    mitre_attack_tactic = "Defense Evasion, Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1574.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_MODULE_LOAD"
+    $e.principal.process.file.full_path = /(?i)(\\windows\\system32\\|\\windows\\syswow64\\|\\program files)/
+    (
+      $e.target.file.full_path = /(?i)\\appdata\\local\\temp\\/ or
+      $e.target.file.full_path = /(?i)\\appdata\\roaming\\/ or
+      $e.target.file.full_path = /(?i)\\programdata\\/ or
+      $e.target.file.full_path = /(?i)\\users\\public\\/ or
+      $e.target.file.full_path = /(?i)\\windows\\temp\\/
+    )
+    not $e.target.file.full_path = /(?i)(\\windows\\system32\\|\\windows\\syswow64\\|\\program files)/
+    (
+      $e.target.file.pe_file.code_signature.signed = false or
+      $e.target.file.pe_file.code_signature.signature_status != "SIGNATURE_VALID"
+    )
+
+  condition:
+    $e
+}

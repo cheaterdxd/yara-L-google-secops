@@ -1,0 +1,57 @@
+# T1587.001 — Malware
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting malware development tooling via UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle UDM, Windows endpoint telemetry via Chronicle forwarder, Sysmon via Chronicle ingestion
+# Required Sources: UDM process events (PROCESS_LAUNCH)
+# False Positives: Build automation on CI agents where MSBuild or CSC runs without an IDE parent — apply reference list exclusion for known build agent hostnames, Security researchers using UPX or VMProtect on isolated lab machines — use asset criticality tags to suppress low-risk research hosts, Authorized red team infrastructure running Metasploit — coordinate time-boxed suppression rules with the red team schedule
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1587.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule malware_development_tooling_t1587_001 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects malware development activity: compilers on non-dev endpoints, packer/protector usage, obfuscator execution, and Metasploit payload generation — MITRE T1587.001"
+    mitre_attack_technique = "T1587.001"
+    mitre_attack_tactic = "Resource Development"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.file.full_path = $proc_path
+    $e.target.process.command_line = $cmd_line
+    $e.principal.process.file.full_path = $parent_path
+
+    (
+      // Branch 1: Compiler on non-dev endpoint
+      (
+        re.regex($proc_path, `(?i)(\\csc\.exe|\\vbc\.exe|\\msbuild\.exe|\\ilasm\.exe|\\cl\.exe|\\link\.exe|\\rc\.exe)$`)
+        and not re.regex($parent_path, `(?i)(\\devenv\.exe|\\code\.exe|\\rider64\.exe|\\idea64\.exe|\\eclipsec\.exe|\\dotnet\.exe)$`)
+      )
+      or
+      // Branch 2: Packer or protector execution
+      (
+        re.regex($proc_path, `(?i)(\\upx\.exe|\\themida\.exe|\\vmprotect\.exe|\\pecompact\.exe|\\aspack\.exe|\\mpress\.exe)$`)
+        or re.regex($cmd_line, `(?i)(upx\s|--best|--brute|--ultra-brute)`)
+      )
+      or
+      // Branch 3: Obfuscator execution
+      (
+        re.regex($proc_path, `(?i)(confuserex|obfuscar|dotfuscator|eazfuscator|dnguard|codeprotector)`)
+        or re.regex($cmd_line, `(?i)(confuserex|obfuscar|dotfuscator|eazfuscator|dnguard)`)
+      )
+      or
+      // Branch 4: Metasploit / msfvenom payload generation
+      re.regex($cmd_line, `(?i)(msfvenom|msfconsole|shell_reverse_tcp|shell_bind_tcp|windows/meterpreter|linux/x86/meterpreter|msf_)`)
+    )
+
+  condition:
+    $e
+}

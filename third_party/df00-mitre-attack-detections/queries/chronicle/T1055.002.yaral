@@ -1,0 +1,33 @@
+# T1055.002 — Portable Executable Injection
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting PE injection via Sysmon CreateRemoteThread events (product_event_type=8) where the StartModule UDM label is empty.
+# Data Sources: Google Chronicle with Sysmon data ingested via Chronicle Forwarder or BindPlane, Windows Sysmon Operational log
+# Required Sources: Chronicle UDM events with metadata.product_event_type = 8 and metadata.product_name matching sysmon
+# False Positives: Security vendor EDR components that perform injection-based API hooking may generate CreateRemoteThread events with an empty StartModule when Chronicle's parser does not capture the module reference, Virtualization platform guest tools (VMware Tools, Hyper-V Integration Services) creating threads in host process space may lack a StartModule label after UDM normalization, Some software updater and hot-patching frameworks that create threads in running processes without a DLL path may trigger this rule legitimately
+# Confidence: medium  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule pe_injection_create_remote_thread_no_module {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects PE injection via Sysmon CreateRemoteThread (Event 8) with no StartModule, indicating direct code injection into a remote process"
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1055.002"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1055/002/"
+
+  events:
+    $e.metadata.product_event_type = "8"
+    re.regex($e.metadata.product_name, `(?i)sysmon`)
+    not re.regex($e.principal.process.file.full_path,
+      `(?i)(MsMpEng|csrss|services|svchost|lsass|wmiprvse)\.exe$`)
+    $e.about.labels["StartModule"] = ""
+
+  condition:
+    $e
+}

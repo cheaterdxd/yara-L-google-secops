@@ -1,0 +1,51 @@
+# T1562.013 — Disable or Modify Network Device Firewall
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1562.013 — Disable or Modify Network Device Firewall.
+# Data Sources: Chronicle UDM process events from endpoint sensors, Chronicle ingested network device syslogs (Fortinet, Palo Alto, Cisco, Check Point), Google Chronicle SecOps normalized log pipeline
+# Required Sources: UDM events with event_type = PROCESS_LAUNCH, UDM events with event_type = NETWORK_UNCATEGORIZED, UDM events with event_type = STATUS_UPDATE
+# False Positives: Authorized firewall rule deployments via GPO or endpoint management platforms — cross-reference with expected change management windows in Chronicle context, VPN or endpoint agent installations adding firewall rules via PowerShell as part of legitimate software deployment, Network operations team modifying ACLs on perimeter firewalls — expected to appear in Fortinet/Cisco/PAN logs with known source management IPs
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1562.013
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1562_013_disable_modify_network_device_firewall {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects disabling or modification of host-based and network device firewalls via command-line utilities and network device policy changes. Covers T1562.013 including APT38 and FortiGate exploitation patterns."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1562.013"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e.target.process.command_line, `(?i)netsh\s+(advfirewall|firewall)`) or
+        re.regex($e.target.process.command_line, `(?i)(Set-NetFirewallProfile|New-NetFirewallRule|Remove-NetFirewallRule|Disable-NetFirewallRule|Set-NetFirewallRule)`) or
+        re.regex($e.target.process.command_line, `(?i)iptables\s+(-F|-P\s+INPUT\s+ACCEPT|-P\s+FORWARD\s+ACCEPT|-D)`) or
+        re.regex($e.target.process.command_line, `(?i)ufw\s+disable`) or
+        re.regex($e.target.process.command_line, `(?i)nft\s+(flush\s+ruleset|delete)`) or
+        re.regex($e.target.process.command_line, `(?i)firewall-cmd.*--permanent.*--add-port`)
+      )
+    )
+    or
+    (
+      $e.metadata.event_type = "NETWORK_UNCATEGORIZED"
+      and $e.metadata.vendor_name in nocase ("Fortinet", "Palo Alto Networks", "Cisco", "Check Point")
+      and re.regex($e.metadata.description, `(?i)(policy|rule|access-list|security-policy|firewall)`)
+      and re.regex($e.metadata.description, `(?i)(delete|disable|modify|create|permit\s+any|action\s+accept)`)
+    )
+    or
+    (
+      $e.metadata.event_type = "STATUS_UPDATE"
+      and re.regex($e.metadata.description, `(?i)(firewall rule|config firewall policy|policy delete|rule delete|permit any any)`)
+      and re.regex($e.metadata.description, `(?i)(delete|disable|modify|removed|modified)`)
+    )
+
+  condition:
+    $e
+}

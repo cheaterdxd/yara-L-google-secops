@@ -1,0 +1,53 @@
+# T1207 — Rogue Domain Controller
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting DCShadow / Rogue Domain Controller (T1207) attacks across four parallel branches using UDM normalized event fields: Mimikatz DCShadow process arguments (PROCESS_LAUNCH events), nTDSDSA object creation in the AD Configuration partition (product event 5137), AD replication source context establishment or removal (product events 4928/4929), and computer account modification with Global Catalog or DRSUapi SPNs (product event 4742).
+# Data Sources: Chronicle Windows sensor (Security Event Log ingestion), Microsoft Defender for Endpoint via Chronicle integration, Active Directory Audit Logs via Chronicle ingestion pipeline
+# Required Sources: MICROSOFT_WINDOWS, WINDOWS_ACTIVE_DIRECTORY, CS_EDR
+# False Positives: Legitimate Domain Controller promotion generates PROCESS_LAUNCH events for dcpromo-related binaries and product events 5137, 4928, 4929 during normal ADDS role installation — validate against asset inventory and CMDB for known DC promotion activities before escalating, AD replication agreement creation during forest-level disaster recovery exercises or infrastructure expansion projects generates Events 4928 and 4929 on all DCs in the affected site — correlate with change management approval records, Authorized penetration testing or purple team exercises executing Mimikatz DCShadow against non-production domains — coordinate asset tagging with red team to suppress known test host alerts during engagements
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1207
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1207_Rogue_Domain_Controller {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects DCShadow / Rogue Domain Controller attacks via Mimikatz process arguments, nTDSDSA AD object creation, AD replication source changes, and DC-like SPN additions to computer accounts"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1207"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1207/"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        re.regex($e.target.process.command_line, `(?i)lsadump::dcshadow`) or
+        re.regex($e.target.process.command_line, `(?i)dcshadow\s+/(push|start|domain|object|attribute)`)
+      )
+    ) or
+    (
+      $e.metadata.product_event_type = "5137" and
+      (
+        re.regex($e.target.resource.name, `(?i)nTDSDSA`) or
+        re.regex($e.security_result.description, `(?i)NTDS\s+Settings`)
+      )
+    ) or
+    (
+      $e.metadata.product_event_type = "4928" or
+      $e.metadata.product_event_type = "4929"
+    ) or
+    (
+      $e.metadata.product_event_type = "4742" and
+      (
+        re.regex($e.target.resource.attribute.labels["ServicePrincipalNames"], `GC/`) or
+        re.regex($e.target.resource.attribute.labels["ServicePrincipalNames"], `E3514235-4B06-11D1-AB04-00C04FC2DCD2`)
+      )
+    )
+
+  condition:
+    $e
+}

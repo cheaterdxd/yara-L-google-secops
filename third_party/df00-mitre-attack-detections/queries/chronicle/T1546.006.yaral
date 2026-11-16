@@ -1,0 +1,39 @@
+# T1546.006 — LC_LOAD_DYLIB Addition
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting macOS Mach-O manipulation tool execution with dylib injection arguments.
+# Data Sources: Chronicle UDM (macOS endpoint telemetry), CrowdStrike Falcon forwarded to Chronicle, Carbon Black Cloud forwarded to Chronicle
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Xcode and developer toolchain build scripts that invoke install_name_tool to set library paths during compilation and linking, Open source package management tools (Homebrew, conda, MacPorts) that manipulate dylib RPATHs during package installation, Automated testing frameworks on macOS that use codesign or lipo for binary compatibility testing across architectures
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule macos_lc_load_dylib_addition {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects use of Mach-O binary manipulation tools with LC_LOAD_DYLIB-related arguments indicating potential dylib injection for persistence (T1546.006)"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1546.006"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.platform = "MAC"
+    $e.target.process.file.full_path = /install_name_tool|otool|codesign|lipo|jtool|jtool2|macho_tool/ nocase
+    (
+      $e.target.process.command_line = /-add_rpath/ nocase or
+      $e.target.process.command_line = /-change / nocase or
+      $e.target.process.command_line = /-rpath / nocase or
+      $e.target.process.command_line = /LC_LOAD_DYLIB/ nocase or
+      $e.target.process.command_line = /@rpath/ nocase or
+      $e.target.process.command_line = /@loader_path/ nocase or
+      $e.target.process.command_line = /@executable_path/ nocase
+    )
+
+  condition:
+    $e
+}

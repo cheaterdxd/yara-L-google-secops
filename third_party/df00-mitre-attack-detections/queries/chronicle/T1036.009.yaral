@@ -1,0 +1,38 @@
+# T1036.009 — Break Process Trees
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Detects Linux processes that have been reparented to PID 1 (init or systemd) and are not recognized system daemons.
+# Data Sources: Google Chronicle UDM via BindPlane agent, Chronicle Linux endpoint telemetry (Auditbeat or osquery), Syslog forwarded to Chronicle via Ingestion API
+# Required Sources: process (UDM event type PROCESS_LAUNCH)
+# False Positives: Third-party commercial software (enterprise monitoring agents, backup clients, AV engines) that correctly follows POSIX daemonization convention will spawn processes adopted by PID 1, and may not appear in the exclusion regex until explicitly added., Snap and Flatpak application sandboxes managed by snapd or Flatpak subsystems can create process trees where applications appear as children of init rather than the launching shell, depending on confinement level., Manual backgrounding of scripts using nohup or setsid by system administrators performing maintenance tasks will cause processes to be reparented to PID 1 and trigger this rule.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1036.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1036_009_break_process_trees {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects processes reparented to PID 1 via double-fork or daemon() syscall, indicating process tree breaking for defense evasion on Linux"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1036.009"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.parent_process.pid = 1
+    not re.regex(
+      $e.target.process.file.full_path,
+      `/\b(systemd|init|crond?|atd|sshd|dockerd|containerd|containerd-shim|NetworkManager|rsyslogd|dbus-daemon|polkitd|udisksd|accounts-daemon|agetty|login|su|sudo|auditd|chronyd|ntpd|irqbalance|tuned|lvm|udevd|multipathd|mdadm|lvmetad)\b`
+    )
+    not re.regex(
+      $e.target.process.file.full_path,
+      `^/(usr/lib/systemd|lib/systemd|run/systemd|usr/lib/udev|lib/udev)/`
+    )
+
+  condition:
+    $e
+}

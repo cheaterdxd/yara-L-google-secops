@@ -1,0 +1,101 @@
+# T1550.002 — Pass the Hash
+# Tactic: Defense Evasion, Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two YARA-L 2.0 rules for Google Chronicle Security Operations (SIEM).
+# Data Sources: Windows Security Event Log via Chronicle forwarder or Google Cloud Chronicle ingestion (Event ID 4624), Sysmon Operational Log via Chronicle forwarder (Event ID 10)
+# Required Sources: UDM events (Chronicle normalized event stream), Microsoft Windows log source (Chronicle ingestion pipeline)
+# False Positives: CrowdStrike Falcon and Microsoft Defender for Endpoint sensor processes that legitimately open LSASS for telemetry collection use access masks that overlap with dumping masks — these should be excluded by principal.process.file.full_path regex additions scoped to your specific EDR sensor binary paths and verified against your deployed EDR version., Domain controllers performing Kerberos-to-NTLM downgrade for legacy client compatibility will generate bursts of Type 3 NTLM logons from many workstations to the DC IP — exclude the DC's IP in principal.ip if it appears as a source, or tighten to flag only lateral east-west movement (workstation-to-workstation)., Automated integration testing pipelines that authenticate against Windows services using NTLM in CI/CD environments will fire the Type 3 branch continuously during build runs — if a known CI runner IP range exists, add it to a reference list and use 'not $e.principal.ip in %ci_runner_ips' in the events block.
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1550.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1550_002_pass_the_hash_ntlm_logon {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects Pass the Hash via NTLM LogonType 3 (network) and LogonType 9 (Mimikatz sekurlsa::pth /netonly) on Windows hosts"
+    severity = "HIGH"
+    risk_score = "75"
+    technique = "T1550.002"
+    tactic = "TA0008"
+    reference = "https://attack.mitre.org/techniques/T1550/002/"
+    version = "1.0"
+    false_positives = "Legacy NTLM apps, runas /netonly admin workflows"
+
+  events:
+    $e.metadata.product_event_type = "4624"
+    $e.metadata.vendor_name = "Microsoft"
+    (
+      $e.target.resource.attribute.labels["Logon Type"] = "3" or
+      $e.target.resource.attribute.labels["Logon Type"] = "9"
+    )
+    re.regex($e.network.application_protocol, `(?i)NTLM`)
+    not re.regex($e.target.user.userid, `.*\$$`)
+    not $e.target.user.userid in (
+      "ANONYMOUS LOGON", "IUSR", "LOCAL SERVICE", "NETWORK SERVICE",
+      "DWM-1", "DWM-2", "UMFD-0", "UMFD-1"
+    )
+    $e.principal.ip != ""
+    not $e.principal.ip in ("127.0.0.1", "::1", "-")
+    $hostname = $e.principal.hostname
+
+  match:
+    $hostname over 1h
+
+  outcome:
+    $risk_score = max(
+      if($e.target.resource.attribute.labels["Logon Type"] = "9", 80, 65)
+    )
+    $detection_branch = array_distinct(
+      if(
+        $e.target.resource.attribute.labels["Logon Type"] = "9",
+        "NewCredentials_Mimikatz_PtH",
+        "NTLM_Network_Logon_PtH"
+      )
+    )
+    $unique_source_ips = array_distinct($e.principal.ip)
+    $event_count = count()
+
+  condition:
+    $e
+}
+
+rule t1550_002_lsass_credential_access_pre_pth {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects suspicious LSASS process access with credential-dumping access masks, representing the credential harvesting step that precedes Pass the Hash"
+    severity = "CRITICAL"
+    risk_score = "85"
+    technique = "T1550.002"
+    tactic = "TA0006"
+    reference = "https://attack.mitre.org/techniques/T1550/002/"
+    version = "1.0"
+    false_positives = "AV/EDR engines, crash dump tooling, legitimate monitoring agents"
+
+  events:
+    $e.metadata.product_event_type = "10"
+    $e.metadata.vendor_name = "Microsoft"
+    re.regex($e.target.process.file.full_path, `(?i).*\\lsass\.exe$`)
+    $e.target.resource.attribute.labels["GrantedAccess"] in (
+      "0x1010", "0x1438", "0x143a", "0x40", "0x1fffff"
+    )
+    not re.regex(
+      $e.principal.process.file.full_path,
+      `(?i).*(MsMpEng|Taskmgr|procexp|procexp64|WmiPrvSE|svchost|csrss|wininit|SecurityHealthService|perfmon|lsm)\.exe$`
+    )
+    $hostname = $e.principal.hostname
+
+  match:
+    $hostname over 1h
+
+  outcome:
+    $risk_score = max(85)
+    $detection_branch = array_distinct("LSASS_Credential_Access_PrePtH")
+    $accessing_process = array_distinct($e.principal.process.file.full_path)
+    $access_masks_seen = array_distinct($e.target.resource.attribute.labels["GrantedAccess"])
+    $event_count = count()
+
+  condition:
+    $e
+}

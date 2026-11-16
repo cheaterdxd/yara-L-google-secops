@@ -1,0 +1,64 @@
+# T1112 — Modify Registry
+# Tactic: Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting suspicious Windows Registry modifications to persistence and defense evasion keys.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs via Chronicle forwarder, Sysmon logs via Chronicle UDM ingestion, Microsoft Defender for Endpoint via Chronicle integration
+# Required Sources: UDM REGISTRY_MODIFICATION events
+# False Positives: Legitimate software installations and update processes that use reg.exe or PowerShell to configure persistence mechanisms or disable conflicting security software during setup., System administrators using scripting tools to configure Windows Defender exclusions, UAC policies, or Winlogon settings as part of authorized hardening or configuration workflows., Enterprise backup and recovery agents that modify service registry entries and security policy keys during deployment or DR testing activities.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1112
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1112_modify_registry_suspicious {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious Windows Registry modifications to persistence and defense evasion keys initiated by commonly abused processes. Covers Run keys, Winlogon hijack, IFEO debugger, LSA WDigest enable, Windows Defender disable, UAC bypass, and Office macro enable."
+    mitre_attack_tactic = "Defense Evasion, Persistence"
+    mitre_attack_technique = "T1112"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1112/"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($e.target.registry.registry_key, `(?i)(CurrentVersion\\Run|CurrentVersion\\RunOnce|\\Winlogon|\\SYSTEM\\CurrentControlSet\\Services\\|Image File Execution Options|\\Control\\Lsa|Windows Defender|Policies\\System|\\Microsoft\\Office|ZoneMap)`) = true
+    )
+    re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|msbuild\.exe|wmic\.exe|certutil\.exe|bitsadmin\.exe|installutil\.exe|reg\.exe)$`) = true
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $host = $e.principal.hostname
+    $user = $e.principal.user.userid
+    $process = $e.principal.process.file.full_path
+    $registry_key = $e.target.registry.registry_key
+    $registry_value_name = $e.target.registry.registry_value_name
+    $registry_value_data = $e.target.registry.registry_value_data
+    $is_wdigest_enable = if(
+      re.regex($e.target.registry.registry_key, `(?i)\\Lsa`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)UseLogonCredential`), 1, 0
+    )
+    $is_defender_disable = if(
+      re.regex($e.target.registry.registry_key, `(?i)Windows Defender`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)(DisableAntiSpyware|DisableRealtimeMonitoring|DisableAntiVirus)`), 1, 0
+    )
+    $is_uac_bypass = if(
+      re.regex($e.target.registry.registry_key, `(?i)Policies\\System`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)(EnableLUA|ConsentPromptBehaviorAdmin)`), 1, 0
+    )
+    $is_ifeo = if(
+      re.regex($e.target.registry.registry_key, `(?i)Image File Execution Options`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)Debugger`), 1, 0
+    )
+    $is_winlogon_hijack = if(
+      re.regex($e.target.registry.registry_key, `(?i)Winlogon`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)(Userinit|Shell)`), 1, 0
+    )
+
+  condition:
+    $e
+}

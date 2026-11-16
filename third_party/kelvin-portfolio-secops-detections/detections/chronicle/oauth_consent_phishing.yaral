@@ -1,0 +1,17 @@
+rule oauth_consent_phishing {
+  meta:
+    author = "Kelvin Odarikpe"
+    description = "OAuth application consent granting mail or files scope from a new app"
+    severity = "HIGH"
+    mitre = "T1528"
+    portfolio = "true"
+    product = "Google SecOps / Chronicle"
+  events:
+    $e.metadata.event_type = "USER_RESOURCE_UPDATE_PERMISSIONS"
+    $e.target.resource.attribute.permissions = "Mail.Read" or
+      $e.target.resource.attribute.permissions = "Files.ReadWrite.All"
+  match:
+    $e.principal.user.userid over 1h
+  condition:
+    $e
+}

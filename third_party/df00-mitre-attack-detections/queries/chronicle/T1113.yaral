@@ -1,0 +1,71 @@
+# T1113 — Screen Capture
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules targeting T1113 Screen Capture.
+# Data Sources: Google Chronicle Security Operations, Windows endpoint logs via Chronicle forwarder agent, EDR telemetry normalized to Chronicle UDM
+# Required Sources: UDM events with event_type PROCESS_LAUNCH, UDM events with event_type FILE_CREATION
+# False Positives: Authorized red team or penetration testing tooling (Cobalt Strike screenshot beacon, Metasploit screengrab module) during sanctioned engagements that will trigger the scripting engine API branch, Enterprise screen recording or video conferencing software (Zoom local recording, Microsoft Teams background blur) that creates intermediate image frames in temp directories during meetings, Batch image processing or document conversion pipelines (ImageMagick, LibreOffice headless) that write PNG/JPEG output to /tmp or %TEMP% as part of standard document rendering workflows
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1113
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1113_screen_capture_process {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects MITRE ATT&CK T1113 screen capture via known utilities from suspicious parents or scripting engines using screenshot APIs"
+    mitre_attack_technique = "T1113"
+    mitre_attack_tactic = "Collection"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      // Branch 1: Known screenshot tool launched from suspicious scripting parent
+      (
+        (
+          re.regex($e.target.process.file.full_path,
+            `(?i)(scrot|xwd|gnome-screenshot|ksnapshot|spectacle|screencapture|psr\.exe|snippingtool\.exe|snipingtool\.exe|screenshot\.exe|xrandr)`) or
+          re.regex($e.target.process.command_line,
+            `(?i)(CopyFromScreen|GetDC|BitBlt|PrintWindow|xwd\s+-root|scrot\s+|screencapture\s+|xrandr\s+--screenshot)`)
+        ) and
+        re.regex($e.principal.process.file.full_path,
+          `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|regsvr32\.exe|rundll32\.exe|svchost\.exe)`)
+      ) or
+      // Branch 2: Scripting engine invoking screenshot .NET or Win32 APIs
+      (
+        re.regex($e.target.process.file.full_path,
+          `(?i)(powershell\.exe|pwsh\.exe|cscript\.exe|wscript\.exe|mshta\.exe)`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(CopyFromScreen|System\.Drawing\.Graphics|System\.Windows\.Forms\.Screen|Graphics\.CopyFromScreen|PrintWindow|VK_SNAPSHOT|keybd_event|0x2C)`)
+      )
+    )
+
+  condition:
+    $e
+}
+
+rule t1113_screen_capture_file_staging {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious image file creation in temp/staging paths by non-UI processes, indicating screenshot staging for exfiltration (T1113)"
+    mitre_attack_technique = "T1113"
+    mitre_attack_tactic = "Collection"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    re.regex($e.target.file.full_path, `(?i)\.(png|jpg|jpeg|bmp|gif)$`)
+    re.regex($e.target.file.full_path,
+      `(?i)(\\Temp\\|\\AppData\\Local\\Temp\\|\\ProgramData\\|\\Users\\Public\\|/tmp/|/var/tmp/)`)
+    not re.regex($e.principal.process.file.full_path,
+      `(?i)(explorer\.exe|chrome\.exe|firefox\.exe|msedge\.exe|iexplore\.exe|outlook\.exe|teams\.exe|slack\.exe|zoom\.exe|mspaint\.exe|photoshop\.exe|gimp\.exe|OneDrive)`)
+
+  condition:
+    $e
+}

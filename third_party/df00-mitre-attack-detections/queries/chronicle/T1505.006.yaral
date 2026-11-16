@@ -1,0 +1,51 @@
+# T1505.006 — vSphere Installation Bundles
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting vSphere VIB installation from Windows management hosts.
+# Data Sources: Chronicle UDM (Windows Endpoint), Google Security Operations Sensor, Sysmon via Chronicle Forwarder
+# Required Sources: UDM PROCESS_LAUNCH events, UDM FILE_CREATION events
+# False Positives: Authorized VMware administrators using esxcli or PowerCLI interactively from jump hosts to manage ESXi cluster upgrades and patches, Automated configuration management pipelines (Puppet, Chef, Ansible Tower) using PowerCLI modules to enforce ESXi baseline compliance, VMware Professional Services or TAM-assisted deployments that install partner VIBs for monitoring, storage multipathing, or network virtualization
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1505.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1505_006_vSphere_VIB_Installation {
+  meta:
+    author = "df00tech"
+    description = "Detects vSphere Installation Bundle (VIB) installation from Windows management hosts targeting ESXi hypervisors. Covers esxcli/PowerCLI CLI execution, PowerShell-based VIB management, and VIB package file creation."
+    reference = "https://attack.mitre.org/techniques/T1505/006/"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1505.006"
+    created = "2026-04-20"
+
+  events:
+    (
+      // Pattern 1: esxcli or PowerCLI binary execution
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      $e1.metadata.vendor_name = "Microsoft"
+      $e1.principal.hostname = $host
+      (
+        re.regex($e1.target.process.file.full_path, `(?i)(esxcli|esxcfg-dumppart|powercli|vmwarecli)\.exe$`) or
+        re.regex($e1.target.process.command_line, `(?i)(software\s+vib\s+install|--vibs|esxcli\s+software)`) or
+        (
+          re.regex($e1.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`) and
+          re.regex($e1.target.process.command_line, `(?i)(Install-EsxSoftwarePackage|Add-EsxSoftwareDepot|Get-EsxSoftwarePackage|esxcli\.software\.vib|esxupdate)`) and
+          re.regex($e1.target.process.command_line, `(?i)(vib|esxi|vmware|vsphere)`)
+        )
+      )
+    ) or
+    (
+      // Pattern 2: VIB package file creation on disk
+      $e1.metadata.event_type = "FILE_CREATION"
+      $e1.metadata.vendor_name = "Microsoft"
+      $e1.principal.hostname = $host
+      re.regex($e1.target.file.full_path, `(?i)\.(vib|vgz)$`)
+    )
+
+  condition:
+    $e1
+}

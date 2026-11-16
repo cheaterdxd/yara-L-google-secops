@@ -1,0 +1,58 @@
+# T1012 — Query Registry
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1012 Query Registry via reg.exe and PowerShell.
+# Data Sources: Google Chronicle SIEM, Windows endpoint telemetry via Chronicle forwarder, Sysmon via Chronicle ingestion pipeline
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: System monitoring and observability agents (e.g., Datadog, New Relic, Dynatrace) querying registry for performance counters and installed application versions, Antivirus and endpoint security product self-checks querying Image File Execution Options, LSA providers, and CurrentControlSet\Services to verify their own integrity, Enterprise PKI and certificate management tools querying Microsoft\Cryptography for machine GUID and certificate store configuration
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1012
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1012_query_registry_sensitive_paths {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1012 Query Registry — adversary enumeration of sensitive registry paths via reg.exe or PowerShell. Covers credential stores, persistence locations, installed software, security configuration, and SSH/credential manager keys."
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1012"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    reference = "https://attack.mitre.org/techniques/T1012/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.command_line = $cmdline
+
+    // Match reg.exe query/export/save OR PowerShell registry enumeration
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\reg\.exe$`)
+        and re.regex($cmdline, `(?i)(\squery\s|\sexport\s|\ssave\s)`)
+      )
+      or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`)
+        and re.regex($cmdline, `(?i)(HKLM:|HKCU:|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER|Registry::)`)
+        and re.regex($cmdline, `(?i)(Get-Item|Get-ItemProperty|Get-ChildItem|Get-ItemPropertyValue)`)
+      )
+    )
+
+    // Must match at least one trigger condition
+    (
+      // Sensitive registry path accessed
+      re.regex($cmdline, `(?i)(Windows NT.CurrentVersion|HARDWARE.DESCRIPTION.System|CurrentVersion.Uninstall|Microsoft.Cryptography|CurrentControlSet.Services|CurrentControlSet.Control.Lsa|SimonTatham.PuTTY|OpenSSH.Agent|Internet Settings|Terminal Server|Software.Policies|Bitcoin|Image File Execution.Options|Classes.http.shell|CurrentVersion.Run|WinSCP.Sessions)`)
+      or
+      // Spawned from suspicious parent process
+      re.regex($e.principal.process.file.full_path, `(?i)(wscript|cscript|mshta|wmic|rundll32|regsvr32|msbuild|installutil|excel|winword|outlook|powerpnt)\.exe$`)
+      or
+      // Recursive enumeration flag
+      re.regex($cmdline, `(?i)(\s/s\b|\s-s\b|-Recurse)`)
+    )
+
+  condition:
+    $e
+}

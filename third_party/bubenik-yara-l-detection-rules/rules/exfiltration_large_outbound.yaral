@@ -1,0 +1,26 @@
+rule exfiltration_large_outbound_transfer {
+  meta:
+    author = "Bubenik2022"
+    description = "Host sends a large volume of data to a single external destination (possible exfiltration)"
+    severity = "HIGH"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1041"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.principal.hostname = $host
+    $e.target.ip = $dst
+    not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16")
+
+  match:
+    $host, $dst over 1h
+
+  outcome:
+    $bytes_out = sum($e.network.sent_bytes)
+    $risk_score = 65
+
+  condition:
+    $e and $bytes_out > 500000000
+}

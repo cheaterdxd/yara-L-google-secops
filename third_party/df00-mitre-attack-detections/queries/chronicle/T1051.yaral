@@ -1,0 +1,55 @@
+# T1051 — Shared Webroot
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for T1051 Shared Webroot.
+# Data Sources: Chronicle UDM (Sysmon via Google Chronicle Forwarder), Chronicle UDM (CrowdStrike Falcon via Chronicle integration), Chronicle UDM (Carbon Black via Chronicle integration), Chronicle UDM (Microsoft Defender for Endpoint via Chronicle integration)
+# Required Sources: UDM PROCESS_LAUNCH events, UDM FILE_CREATION events
+# False Positives: Java application servers (Tomcat, WildFly) that use java.exe as both the server process and for spawning legitimate JVM child processes for JSP compilation or scheduled tasks — the parent/child java→java pattern may be benign; focus on java spawning cmd.exe, PowerShell, or OS utilities specifically, Automated web application deployment tools (msdeploy.exe, deploy.sh, Capistrano) running under a service account that writes ASPX or PHP files to the webroot — these are not web server processes so they will trigger the file drop rule; whitelist known deployer binary paths in the NOT clause, Security scanning agents (Nessus, Qualys, Rapid7) that perform authenticated web application scanning may create temporary probe files with script extensions in webroot directories — identify scanner service account names and add them to the exclusion list
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1051
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1051_shared_webroot_webshell_execution {
+  meta:
+    author = "df00tech"
+    description = "Detects web server processes spawning suspicious child processes indicative of webshell execution following shared webroot compromise (T1051). Web servers (IIS w3wp, Apache httpd, nginx, Tomcat java) should not directly spawn cmd.exe, PowerShell, or reconnaissance utilities under normal operation."
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1051"
+    mitre_attack_technique_name = "Shared Webroot"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    priority = "HIGH"
+    rule_version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(w3wp|httpd|httpd2|nginx|php-cgi|php-win|tomcat[0-9]?|java|iisexpress|UMWorkerProcess)\.exe$/
+    $e.target.process.file.full_path = /(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|net1?|whoami|ipconfig|systeminfo|nltest|certutil|bitsadmin|rundll32|regsvr32|msiexec)\.exe$/
+
+  condition:
+    $e
+}
+
+rule T1051_shared_webroot_file_drop {
+  meta:
+    author = "df00tech"
+    description = "Detects web script files (PHP, ASPX, JSP, CFM, CGI) written to known webroot directories by non-web-server processes, indicating a likely webshell drop via shared network drive (T1051). Monitor for files written by SMB client processes, script interpreters, or admin tools rather than the web server itself."
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1051"
+    mitre_attack_technique_name = "Shared Webroot"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    priority = "HIGH"
+    rule_version = "1.0"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    $e.target.file.full_path = /(?i)(\\inetpub\\wwwroot\\|\\xampp\\htdocs\\|\\wamp\\www\\|\\wamp64\\www\\|\\Apache24\\htdocs\\|\\nginx\\html\\|\\tomcat\\webapps\\|\\jetty\\webapps\\|\/var\/www\/html\/|\/srv\/www\/|\/usr\/share\/nginx\/)/
+    $e.target.file.full_path = /(?i)\.(php5?|phtml|aspx?|ashx|asmx|jspx?|cfml?|pl|cgi|shtml)$/
+    NOT $e.principal.process.file.full_path = /(?i)(w3wp|httpd|httpd2|nginx|msiexec|TrustedInstaller|MicrosoftEdgeUpdate)\.exe$/
+
+  condition:
+    $e
+}

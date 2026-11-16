@@ -1,0 +1,32 @@
+# T1055.009 — Proc Memory
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule using UDM (Unified Data Model) fields to detect file open events targeting /proc/[pid]/mem, /proc/[pid]/maps, or /proc/[pid]/syscall paths.
+# Data Sources: Google Chronicle UDM with Linux endpoint telemetry ingested via Chronicle Forwarder or BindPlane, Chronicle Ingestion API with Linux auditd or endpoint agent logs normalized to UDM FILE_OPEN events
+# Required Sources: UDM events (FILE_OPEN event type)
+# False Positives: Language runtimes such as Go or Rust that read /proc/[pid]/maps at startup to initialize memory-safe stack bounds checking, Monitoring daemons like collectd or netdata that poll /proc entries for system metrics and occasionally access process-specific memory mappings, Container escape detection tools (e.g. Falco in detection mode) that themselves access /proc/pid paths to identify anomalous container activity
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule proc_memory_injection_t1055_009 {
+  meta:
+    author = "df00tech"
+    description = "Detects /proc/pid/mem and /proc/pid/maps file access indicative of proc memory injection (T1055.009). Adversaries enumerate memory layout via maps and overwrite stack or heap via direct mem writes."
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1055.009"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-16"
+
+  events:
+    $e.metadata.event_type = "FILE_OPEN"
+    $e.target.file.full_path = /\/proc\/[0-9]+\/(mem|maps|syscall)/
+    not $e.target.file.full_path = /\/proc\/self\//
+    not re.regex($e.principal.process.file.full_path, `/(gdb|strace|ltrace|perf|systemd|dockerd|containerd|ps|top|htop|lsof)$`)
+
+  condition:
+    $e
+}

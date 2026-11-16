@@ -1,0 +1,44 @@
+# T1070.004 — File Deletion
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1070.004 file deletion via FILE_DELETION UDM events.
+# Data Sources: Google Chronicle SIEM, Windows endpoint telemetry via Chronicle forwarder, Sysmon Event ID 23 ingested into Chronicle UDM
+# Required Sources: UDM events with event_type FILE_DELETION
+# False Positives: Windows Update (TiWorker.exe, TrustedInstaller.exe) and Windows Installer (msiexec.exe) removing staging files during patching cycles — already excluded in rule logic, Security operations teams running SDelete intentionally for data sanitization or secure workstation decommissioning workflows, Application virtualization platforms (VMware App Volumes, Microsoft App-V) that decompress app packages to temp directories and clean up after session launch
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1070_004_file_deletion_staging_dir {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects deletion of executables and scripts from staging directories, SDelete secure deletion usage, and process self-deletion patterns (T1070.004 - File Deletion)"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.004"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "FILE_DELETION"
+    $e.principal.hostname != ""
+
+    (
+      (
+        re.regex($e.target.file.full_path, `(?i)(\\Temp\\|\\AppData\\Local\\Temp\\|\\ProgramData\\|\\Users\\Public\\|\\Windows\\Temp\\)`)
+        and re.regex($e.target.file.full_path, `(?i)\.(exe|dll|bat|ps1|vbs|js|hta|cmd)$`)
+      )
+      or re.regex($e.principal.process.file.full_path, `(?i)(sdelete|sdelete64)\.exe$`)
+      or (
+        $e.principal.process.file.full_path = $e.target.file.full_path
+      )
+    )
+
+    not re.regex($e.principal.process.file.full_path, `(?i)(msiexec|setup|uninstall|MpSigStub|TiWorker|TrustedInstaller)\.exe$`)
+
+  condition:
+    $e
+}

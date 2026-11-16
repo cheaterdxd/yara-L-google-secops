@@ -1,0 +1,67 @@
+# T1562.008 — Disable or Modify Cloud Logs
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting cloud audit logging tampering across AWS CloudTrail, Azure Diagnostic Settings, and Microsoft 365 audit policies.
+# Data Sources: AWS CloudTrail, Microsoft Azure Activity Logs, Microsoft Office 365 Audit Logs
+# Required Sources: UDM Events (USER_RESOURCE_UPDATE_CONTENT)
+# False Positives: Automated cloud governance tooling that regularly audits and remediates diagnostic settings across subscriptions, triggering WRITE events on diagnostic settings, Scheduled decommission pipelines that stop CloudTrail logging in terminated AWS accounts as part of a formal offboarding process, O365 tenant configuration changes by Microsoft-authorized support personnel during incident response or tenant migration activities
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1562.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule disable_modify_cloud_logs_t1562_008 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects disabling or modification of cloud logging capabilities across AWS, Azure, and Microsoft 365 (MITRE ATT&CK T1562.008)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1562.008"
+    reference = "https://attack.mitre.org/techniques/T1562/008/"
+
+  events:
+    $e.metadata.event_type = "USER_RESOURCE_UPDATE_CONTENT"
+    (
+      // AWS CloudTrail tampering
+      (
+        $e.metadata.product_name = "AWS CloudTrail"
+        and $e.metadata.product_event_type in (
+          "StopLogging",
+          "DeleteTrail",
+          "UpdateTrail",
+          "PutEventSelectors",
+          "RemoveTargets",
+          "DeleteFlowLogs",
+          "DeleteDetector",
+          "DeleteMembers",
+          "DisableOrganizationAdminAccount"
+        )
+      )
+      or
+      // Azure Diagnostic Settings tampering
+      (
+        $e.metadata.product_name = "Microsoft Azure"
+        and $e.metadata.product_event_type in (
+          "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/DELETE",
+          "MICROSOFT.INSIGHTS/DIAGNOSTICSETTINGS/WRITE",
+          "MICROSOFT.SECURITY/SECURITYCONTACTS/DELETE"
+        )
+      )
+      or
+      // Microsoft 365 Audit tampering
+      (
+        $e.metadata.product_name = "Microsoft Office 365"
+        and $e.metadata.product_event_type in (
+          "Set-MailboxAuditBypassAssociation",
+          "Set-AdminAuditLogConfig",
+          "Disable-OrganizationCustomization",
+          "Set-OrganizationConfig"
+        )
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,34 @@
+# T1650 — Acquire Access
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for detecting Acquire Access (T1650).
+# Data Sources: Azure AD, Microsoft 365
+# Required Sources: USER_CHANGE, RESOURCE_CREATION
+# False Positives: Legitimate employee travel to a new country using personal or hotel WiFi triggering new geolocation detection, Corporate VPN exit node changes or new VPN infrastructure rollout causing unfamiliar IP signals, IT administrators using anonymizing proxies or jump hosts for infrastructure management from new regions
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1650
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detection_t1650 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects Acquire Access cloud activity - T1650"
+    severity = "HIGH"
+    mitre_attack = "T1650"
+    reference = "https://attack.mitre.org/techniques/T1650/"
+
+  events:
+    $e.metadata.event_type = "USER_CHANGE"
+    $e.principal.user.userid = $user
+    $e.principal.ip = $source_ip
+    $e.target.resource.name = $resource
+    (
+      re.regex($e.metadata.product_event_type, `(?i)(add|delete|consent|update|create)`) and
+      not re.regex($e.principal.user.userid, `(?i)(service-|automation-|pipeline-)`)
+    )
+
+  condition:
+    $e
+}

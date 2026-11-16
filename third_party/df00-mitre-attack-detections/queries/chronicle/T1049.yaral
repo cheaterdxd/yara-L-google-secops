@@ -1,0 +1,62 @@
+# T1049 — System Network Connections Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1049 System Network Connections Discovery.
+# Data Sources: Chronicle UDM Events, Google Cloud Chronicle SIEM, Forwarder-ingested Windows Event Logs, Linux Auditd via Chronicle
+# Required Sources: UDM Events - PROCESS_LAUNCH
+# False Positives: System health check scripts deployed by operations teams that run netstat at regular intervals to monitor connection counts, Security tools performing automated asset discovery that enumerate connections via PowerShell cmdlets across the fleet, Developers on engineering workstations using lsof -i or ss -anp while debugging networked applications locally
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1049
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1049_SystemNetworkConnectionsDiscovery {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1049 network connection discovery via netstat, net use/session/view, and PowerShell network enumeration cmdlets. High-fidelity signal when combined with suspicious parent process."
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1049"
+    reference = "https://attack.mitre.org/techniques/T1049/"
+    created = "2026-04-16"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.principal.user.userid = $user
+    $e.target.process.command_line = $cmdline
+    $e.target.process.file.full_path = $image
+
+    (
+      // netstat with enumeration flags
+      (
+        re.regex($image, `(?i).*netstat\.exe$`) and
+        re.regex($cmdline, `(?i).*(\-ano|\-an |\-aon|\-naop|\-anp).*`)
+      ) or
+      // net.exe / net1.exe discovery commands
+      (
+        re.regex($image, `(?i).*net1?\.exe$`) and
+        re.regex($cmdline, `(?i)\b(use|session|view)\b`)
+      ) or
+      // PowerShell network enumeration
+      (
+        re.regex($image, `(?i).*(powershell|pwsh)\.exe$`) and
+        re.regex($cmdline, `(?i)(Get-NetTCPConnection|Get-NetUDPEndpoint|netstat)`)
+      ) or
+      // Linux ss command
+      (
+        re.regex($image, `(?i).*/ss$`) and
+        re.regex($cmdline, `(?i)-(anp|tulnp|tunap)`)
+      ) or
+      // Linux lsof for network
+      (
+        re.regex($image, `(?i).*/lsof$`) and
+        re.regex($cmdline, `(?i)-(i|nP)`)
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,68 @@
+# T1586.001 — Social Media Accounts
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule correlating the two-stage T1586.001 attack pattern across UDM events: a social identity provider sign-in with elevated risk signals (high-risk geolocation, anomalous risk event types, elevated risk score) followed within 4 hours by a high-privilege OAuth scope consent grant from the same user email.
+# Data Sources: Google Chronicle UDM — Microsoft Azure AD authentication events (USER_LOGIN), Google Chronicle UDM — Microsoft 365 Unified Audit events (USER_RESOURCE_ACCESS)
+# Required Sources: UDM event types: USER_LOGIN, USER_RESOURCE_ACCESS
+# False Positives: Employees using LinkedIn Learning or Google Workspace SSO for corporate access who subsequently approve Teams or SharePoint integrations, particularly when traveling internationally for legitimate business, IT administrators federating new identity providers as part of an approved SSO migration project — the new IdP configuration test may generate both social sign-in events and broad consent grants, New employee onboarding in organizations using social identity for initial account bootstrap, where the IT helpdesk performs admin consent on behalf of new users for approved productivity suites
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1586.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule social_media_account_compromise_t1586_001 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1586.001: successful social identity provider OAuth authentication followed within 4 hours by a high-privilege scope consent grant from the same user. Models the post-compromise OAuth phishing chain used by Leviathan/APT40 and Sandworm: compromise social account, use it to phish OAuth consent, gain persistent delegated access to corporate resources."
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1586.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2024-01-01"
+    platforms = "Azure AD, Microsoft 365"
+    references = "https://attack.mitre.org/techniques/T1586/001/"
+
+  events:
+    // Stage 1: Successful social identity provider sign-in with risk indicator
+    $signin.metadata.event_type = "USER_LOGIN"
+    $signin.metadata.vendor_name = "Microsoft"
+    $signin.security_result.severity != "INFORMATIONAL"
+    (
+      re.regex($signin.network.application_protocol_version, `(?i)(google|facebook|linkedin|twitter|github|slack|yahoo)`) or
+      re.regex($signin.target.application.name, `(?i)(google|facebook|linkedin|twitter|github|slack|yahoo)`) or
+      re.regex($signin.extensions.auth.auth_details, `(?i)identityprovider.*(google|facebook|linkedin|twitter|github|slack|yahoo)`)
+    )
+    (
+      $signin.principal.ip_geo_artifact.location.country_or_region = "CN" or
+      $signin.principal.ip_geo_artifact.location.country_or_region = "RU" or
+      $signin.principal.ip_geo_artifact.location.country_or_region = "IR" or
+      $signin.principal.ip_geo_artifact.location.country_or_region = "KP" or
+      $signin.principal.ip_geo_artifact.location.country_or_region = "BY" or
+      $signin.security_result.risk_score > 50 or
+      re.regex($signin.security_result.threat_name, `(?i)(anonymizedIP|impossibleTravel|maliciousIP|leakedCredentials|unfamiliarFeatures)`)
+    )
+    $signin.principal.user.email_addresses[0] = $user_email
+
+    // Stage 2: High-privilege OAuth consent grant within 4 hours of sign-in
+    $consent.metadata.event_type = "USER_RESOURCE_ACCESS"
+    $consent.metadata.vendor_name = "Microsoft"
+    (
+      $consent.metadata.product_event_type = "Consent to application" or
+      $consent.metadata.product_event_type = "Add OAuth2PermissionGrant" or
+      $consent.metadata.product_event_type = "Add service principal" or
+      $consent.metadata.product_event_type = "Add delegation entry"
+    )
+    (
+      re.regex($consent.target.resource.attribute.labels.value, `(?i)(Mail\.ReadWrite|Files\.ReadWrite\.All|Directory\.ReadWrite|RoleManagement\.ReadWrite\.All|User\.Read\.All|EWS\.AccessAsUser\.All|MailboxSettings\.ReadWrite)`) or
+      $consent.target.resource.attribute.labels["consent_type"] = "AllPrincipals"
+    )
+    $consent.principal.user.email_addresses[0] = $user_email
+
+    // Temporal: consent follows sign-in within 4-hour window
+    $signin.metadata.event_timestamp.seconds <= $consent.metadata.event_timestamp.seconds
+    $consent.metadata.event_timestamp.seconds <= $signin.metadata.event_timestamp.seconds + 14400
+
+  condition:
+    $signin and $consent
+}

@@ -1,0 +1,47 @@
+# T1590.005 — IP Addresses
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule covering three UDM event types to detect IP address intelligence gathering.
+# Data Sources: Chronicle UDM (Unified Data Model), Network proxy or web gateway logs ingested to Chronicle producing NETWORK_HTTP events, DNS resolver or firewall DNS logs ingested to Chronicle producing NETWORK_DNS events, Windows endpoint agent, Sysmon, or CrowdStrike logs ingested to Chronicle producing PROCESS_LAUNCH events
+# Required Sources: UDM NETWORK_HTTP events with target.hostname populated, UDM NETWORK_DNS events with network.dns.questions.name populated, UDM PROCESS_LAUNCH events with target.process.file.full_path and target.process.command_line populated
+# False Positives: Security operations teams performing routine threat intelligence enrichment will generate NETWORK_HTTP and NETWORK_DNS matches against Shodan, Censys, and GreyNoise — maintain a principal.hostname allowlist for SOC workstations and configure a reference list exclusion in the rule condition., DNS-over-HTTPS (DoH) clients or recursive corporate DNS resolvers that cache and prefetch responses for IP intelligence service domains will produce NETWORK_DNS events without a corresponding active human-initiated lookup — correlate with NETWORK_HTTP events within a 30-second window to confirm deliberate intent., Red team or authorised penetration testing engagements using Amass, Subfinder, or theHarvester against external targets will produce PROCESS_LAUNCH matches — coordinate with engagement scheduling and suppress by principal.hostname for the designated testing host., Development environments executing nmap within automated network connectivity tests or infrastructure validation scripts (Ansible, Terraform) will match the PROCESS_LAUNCH branch — filter by target.process.parent.file.full_path for known CI orchestration executables.
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1590.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1590_005_ip_address_reconnaissance {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects IP address reconnaissance via OSINT platform web requests, DNS lookups, or network scanning tool execution — T1590.005 IP Addresses"
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1590.005"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1590/005/"
+
+  events:
+    (
+      $e.metadata.event_type = "NETWORK_HTTP" and
+      re.regex($e.target.hostname,
+        `(?i)(shodan\.io|censys\.io|ipinfo\.io|ipapi\.co|ip-api\.com|ipwhois\.io|bgp\.he\.net|arin\.net|ripe\.net|apnic\.net|lacnic\.net|afrinic\.net|spyse\.com|fofa\.info|zoomeye\.org|dnsdumpster\.com|hackertarget\.com|viewdns\.info|ipvoid\.com|whatismyipaddress\.com|ip2location\.com|maxmind\.com|greynoise\.io|binaryedge\.io|onyphe\.io)`)
+    ) or
+    (
+      $e.metadata.event_type = "NETWORK_DNS" and
+      re.regex($e.network.dns.questions.name,
+        `(?i)(shodan\.io|censys\.io|ipinfo\.io|ipapi\.co|ip-api\.com|ipwhois\.io|bgp\.he\.net|arin\.net|ripe\.net|apnic\.net|lacnic\.net|afrinic\.net|spyse\.com|fofa\.info|zoomeye\.org|dnsdumpster\.com|hackertarget\.com|viewdns\.info|ipvoid\.com|whatismyipaddress\.com|ip2location\.com|maxmind\.com|greynoise\.io|binaryedge\.io|onyphe\.io)`)
+    ) or
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        re.regex($e.target.process.file.full_path,
+          `(?i)(nmap|masscan|zmap|theharvester|amass|subfinder|spiderfoot|recon-ng|maltego)(\.exe)?$`) or
+        re.regex($e.target.process.command_line,
+          `(?i)(shodan search|censys search|nmap -s[nSp]|masscan --rate|zmap -p|theharvester -d|amass enum|subfinder -d|spiderfoot -s)`)
+      )
+    )
+
+  condition:
+    $e
+}

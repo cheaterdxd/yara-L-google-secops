@@ -1,0 +1,39 @@
+# T1542.004 — ROMMONkit
+# Tactic: Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting ROMMONkit (T1542.004) through Cisco device syslog events ingested into Chronicle UDM.
+# Data Sources: Cisco IOS syslog (Chronicle Cisco IOS log parser), Cisco ASA syslog (Chronicle Cisco ASA log parser), Generic syslog from network devices (Chronicle SYSLOG log parser)
+# Required Sources: UDM GENERIC_EVENT log type (Cisco vendor)
+# False Positives: Legitimate ROMMON upgrades performed during scheduled maintenance — Cisco TAC-recommended ROMMON updates generate identical syslog messages; verify against an approved change record, Bulk IOS software upgrades via Cisco Smart Install or TFTP-based provisioning that trigger multiple TFTP and boot system messages across many devices simultaneously, Password recovery procedures performed on routers by network admins using config-register 0x2142 — a standard Cisco recovery technique that triggers the confreg/config-register keywords
+# Confidence: medium  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1542.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1542_004_rommonkit_cisco_firmware_manipulation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects ROMMONkit activity (T1542.004) — ROMMON firmware manipulation on Cisco network devices via syslog indicators including TFTP firmware transfers, ROMMON variable changes, config-register modifications, and suspicious reloads correlated with boot path changes."
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1542.004"
+    reference = "https://attack.mitre.org/techniques/T1542/004/"
+    created = "2026-04-20"
+
+  events:
+    $e.metadata.event_type = "GENERIC_EVENT"
+    $e.metadata.vendor_name = "Cisco"
+    (
+      re.regex($e.metadata.description, `(?i)(rommon|rom\s+monitor|bootldr|boot\s+variable|confreg|config-register|0x2142|0x2100|0x0)`)
+      or re.regex($e.metadata.description, `(?i)(tftp|copy\s+tftp|archive\s+download-sw|upgrade\s+rom-monitor|upgrade\s+rommon)`)
+      or (
+        re.regex($e.metadata.description, `(SYS-5-RELOAD|Reload\s+requested|SYS-6-BOOTTIME)`)
+        and re.regex($e.metadata.description, `(?i)(boot\s+system|BOOT\s+path-list|startup-config)`)
+      )
+    )
+
+  condition:
+    $e
+}

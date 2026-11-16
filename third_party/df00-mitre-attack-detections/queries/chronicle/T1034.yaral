@@ -1,0 +1,69 @@
+# T1034 — Path Interception
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1034 Path Interception using UDM PROCESS_LAUNCH and REGISTRY_MODIFICATION event types.
+# Data Sources: Google Chronicle SIEM with Unified Data Model, Chronicle Forwarder on Windows endpoints, Microsoft Defender for Endpoint events forwarded to Chronicle via MXDR integration, Sysmon logs ingested via Chronicle Windows sensor or Bindplane
+# Required Sources: UDM Events (PROCESS_LAUNCH), UDM Events (REGISTRY_MODIFICATION)
+# False Positives: Windows Subsystem for Linux (WSL2) or Cygwin installations that add user-local binary directories to the Windows PATH during setup, causing expected PATH registry modifications pointing to user profile locations, Build automation systems (Jenkins agents, GitHub Actions runners, TeamCity build agents) that stage test executables named after system utilities in workspace directories and temporarily modify PATH during CI pipeline execution, Legitimate software vendors shipping applications to Program Files subdirectories with unquoted service paths — a widespread historical Windows packaging defect present in many enterprise software titles
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1034
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1034_path_interception {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1034 Path Interception: binary name hijacking, PATH environment variable manipulation, and unquoted service paths"
+    mitre_attack_technique = "T1034"
+    mitre_attack_tactics = "TA0003, TA0004"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1034/"
+
+  events:
+    (
+      /* Signal 1: System binary name executed outside canonical Windows directories */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex(
+          $e.target.process.file.full_path,
+          `(?i)\\(cmd|net|net1|powershell|ipconfig|whoami|ping|tasklist|sc|reg|msiexec|wscript|cscript|rundll32|regsvr32|certutil|msbuild|wmic|schtasks|systeminfo|netstat|arp|route|at|bitsadmin)\.exe$`
+        )
+        and not re.regex($e.target.process.file.full_path, `(?i)^C:\\Windows\\.+`)
+        and not re.regex($e.target.process.file.full_path, `(?i)^C:\\Program Files\\.+`)
+        and not re.regex($e.target.process.file.full_path, `(?i)^C:\\Program Files \(x86\)\\.+`)
+        and not re.regex($e.target.process.file.full_path, `(?i)^C:\\ProgramData\\Microsoft\\.+`)
+      )
+      or
+      /* Signal 2: PATH environment variable modified to include user-writable directories */
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION"
+        and (
+          re.regex($e.target.registry.registry_key, `(?i)\\Control\\Session Manager\\Environment$`)
+          or re.regex($e.target.registry.registry_key, `(?i)(HKCU|HKEY_CURRENT_USER)\\Environment$`)
+        )
+        and re.regex($e.target.registry.registry_value_name, `(?i)^Path$`)
+        and (
+          re.regex($e.target.registry.registry_value_data, `(?i)C:\\Users\\`)
+          or re.regex($e.target.registry.registry_value_data, `(?i)C:\\Temp\\`)
+          or re.regex($e.target.registry.registry_value_data, `(?i)C:\\Windows\\Temp\\`)
+          or re.regex($e.target.registry.registry_value_data, `(?i)%USERPROFILE%`)
+          or re.regex($e.target.registry.registry_value_data, `(?i)%TEMP%`)
+          or re.regex($e.target.registry.registry_value_data, `(?i)%TMP%`)
+          or re.regex($e.target.registry.registry_value_data, `(?i)%APPDATA%`)
+        )
+      )
+      or
+      /* Signal 3: Service ImagePath set without leading quote and containing space before .exe */
+      (
+        $e.metadata.event_type = "REGISTRY_MODIFICATION"
+        and re.regex($e.target.registry.registry_key, `(?i)\\System\\CurrentControlSet\\Services\\[^\\]+\\ImagePath$`)
+        and not re.regex($e.target.registry.registry_value_data, `^["']`)
+        and re.regex($e.target.registry.registry_value_data, `(?i)[A-Za-z]:\\.+ .+\.exe`)
+      )
+    )
+
+  condition:
+    $e
+}

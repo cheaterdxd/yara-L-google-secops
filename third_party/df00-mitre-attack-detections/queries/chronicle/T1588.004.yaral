@@ -1,0 +1,42 @@
+# T1588.004 — Digital Certificates
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting unauthorized modifications to Windows Trusted Root CA and Intermediate CA certificate store registry paths.
+# Data Sources: Windows endpoint telemetry normalized to UDM via Chronicle Forwarder with Sysmon parser, Microsoft Defender for Endpoint events forwarded to Chronicle via data connector
+# Required Sources: UDM events with metadata.event_type = REGISTRY_MODIFICATION
+# False Positives: Internal enterprise PKI deployment via domain Group Policy Objects (GPOs) where the enforcing process is a domain join or policy application process not included in the current allowlist, Security product initial installation events where EDR, DLP, or proxy agents write their inspection certificate to the machine root store using a vendor-specific setup binary, DevOps tooling or CI/CD agents (e.g., Jenkins agent, Ansible runner) executing certificate deployment playbooks as part of automated server provisioning pipelines
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1588.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1588_004_unauthorized_certificate_store_modification {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects unauthorized installation of certificates into Windows Trusted Root CA or Intermediate CA certificate stores via registry modification by non-system processes. Adversaries may install rogue certificates to enable MitM attacks or legitimize C2 TLS traffic."
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1588.004"
+    reference = "https://attack.mitre.org/techniques/T1588/004/"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($e.target.registry.registry_key,
+        `(?i).*\\SOFTWARE\\Microsoft\\SystemCertificates\\Root\\Certificates.*`) or
+      re.regex($e.target.registry.registry_key,
+        `(?i).*\\SOFTWARE\\Microsoft\\SystemCertificates\\CA\\Certificates.*`) or
+      re.regex($e.target.registry.registry_key,
+        `(?i).*\\SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\Root.*`) or
+      re.regex($e.target.registry.registry_key,
+        `(?i).*\\SOFTWARE\\Policies\\Microsoft\\SystemCertificates\\CA.*`)
+    )
+    not re.regex($e.principal.process.file.full_path,
+      `(?i).*(svchost\.exe|lsass\.exe|wuauclt\.exe|TrustedInstaller\.exe|MicrosoftEdgeUpdate\.exe|MsMpEng\.exe|SgrmBroker\.exe)$`)
+
+  condition:
+    $e
+}

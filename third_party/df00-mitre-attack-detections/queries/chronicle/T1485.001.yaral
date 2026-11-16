@@ -1,0 +1,47 @@
+# T1485.001 — Lifecycle-Triggered Deletion
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting S3 lifecycle policy modification events and Azure Blob Storage management policy writes via UDM normalization.
+# Data Sources: AWS CloudTrail Chronicle ingestion feed normalized to UDM, Azure Activity Logs Chronicle ingestion feed normalized to UDM
+# Required Sources: UDM events — metadata.vendor_name AMAZON and MICROSOFT
+# False Positives: Authorized platform engineering lifecycle changes: teams managing S3 storage classes and expiry configurations as part of FinOps cost reduction programs routinely invoke PutBucketLifecycleConfiguration in bulk across all accounts in an AWS Organization., Azure Policy remediation tasks: Azure Policy assignments enforcing lifecycle management policies will write managementpolicies on all non-compliant storage accounts during remediation sweeps, generating many simultaneous ALLOW events from the policy service principal., IaC pipeline application of Terraform storage modules: every Terraform apply that includes an aws_s3_bucket_lifecycle_configuration resource will invoke PutBucketLifecycleConfiguration regardless of whether the policy content changed, including no-op plan runs., Data retention and archival automation services: AWS-native services (Backup, Data Lifecycle Manager) and third-party archival platforms (Veeam, Cohesity) invoke S3 lifecycle APIs as part of normal archival policy enforcement workflows.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1485.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1485_001_lifecycle_triggered_deletion {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects AWS S3 PutBucketLifecycle/PutBucketLifecycleConfiguration API calls and Azure Blob Storage managementpolicies/write operations that may enable lifecycle-triggered mass data destruction (T1485.001 - Data Destruction: Lifecycle-Triggered Deletion)"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1485.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1485/001/"
+    created = "2026-04-13"
+
+  events:
+    (
+      (
+        $e.metadata.vendor_name = "AMAZON" and
+        $e.metadata.product_name = "AWS CloudTrail" and
+        (
+          $e.metadata.product_event_type = "PutBucketLifecycle" or
+          $e.metadata.product_event_type = "PutBucketLifecycleConfiguration"
+        ) and
+        $e.target.resource.resource_type = "STORAGE_BUCKET"
+      ) or
+      (
+        $e.metadata.vendor_name = "MICROSOFT" and
+        $e.metadata.product_name = "Azure Activity" and
+        re.regex($e.metadata.product_event_type, `(?i)managementpolicies.*write`) and
+        $e.security_result.action = "ALLOW"
+      )
+    )
+    $e.principal.user.userid = $actor
+
+  condition:
+    $e
+}

@@ -1,0 +1,49 @@
+# T1040 — Network Sniffing
+# Tactic: Credential Access, Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1040 Network Sniffing across three behavioral patterns using UDM process and file events: execution of named packet capture tools, loading of WinPcap/Npcap kernel drivers by unauthorized parent processes, and use of raw socket or libpcap APIs from scripting language runtimes.
+# Data Sources: Chronicle Endpoint Telemetry (Windows Sysmon via forwarder), Chronicle UDM - PROCESS_LAUNCH events, Chronicle UDM - PROCESS_MODULE_LOAD events
+# Required Sources: process_launch UDM events, process_module_load UDM events
+# False Positives: Authorized IT staff or network engineers executing tcpdump or tshark on production systems for legitimate packet capture during incident response or performance troubleshooting, Commercial security products (EDR platforms, packet brokers, NPMD tools) that load npcap.dll or wpcap.dll as part of their standard network visibility features, Scripted automation in CI/CD pipelines or test environments that invoke Scapy or Impacket for network protocol testing against non-production infrastructure
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1040
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1040_network_sniffing {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects network sniffing activity (T1040) including known packet capture tool execution, WinPcap/Npcap driver loading by non-standard processes, and scripting-language-based raw socket or libpcap usage"
+    technique = "T1040"
+    tactic = "Discovery, Credential Access"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-16"
+
+  events:
+    (
+      // Detection 1: Known sniffing tool executed by process name
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(tcpdump|tshark|wireshark|windump|dumpcap|rawshark|networkminer|intercepter-ng|sniffpass|pcapdump|ntopng|capinfos|editcap|ssldump)`) or
+        re.regex($e.target.process.command_line, `(?i)(tcpdump|tshark|wireshark|windump|dumpcap|networkminer|intercepter|sniffpass|scapy\.all|pcap_open|pcap_loop|sock_raw|af_packet|libpcap|impacket)`)
+      )
+    ) or
+    (
+      // Detection 2: WinPcap/Npcap library loaded by non-standard process
+      $e.metadata.event_type = "PROCESS_MODULE_LOAD" and
+      re.regex($e.target.file.full_path, `(?i)(wpcap\.dll|npcap\.dll|packet\.dll|npf\.sys|npcap\.sys|winpcap\.sys)`) and
+      not re.regex($e.principal.process.file.full_path, `(?i)(wireshark\.exe|tshark\.exe|dumpcap\.exe|rawshark\.exe|capinfos\.exe|editcap\.exe|mergecap\.exe)`)
+    ) or
+    (
+      // Detection 3: Scripting language using raw socket or libpcap API
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($e.principal.process.file.full_path, `(?i)(python\.exe|python3|perl\.exe|ruby\.exe|pwsh\.exe|powershell\.exe)`) and
+      re.regex($e.target.process.command_line, `(?i)(socket\.AF_PACKET|SOCK_RAW|ETH_P_ALL|pcap_open|pcap_loop|pcap_next|libpcap|scapy|impacket)`)
+    )
+
+  condition:
+    $e
+}

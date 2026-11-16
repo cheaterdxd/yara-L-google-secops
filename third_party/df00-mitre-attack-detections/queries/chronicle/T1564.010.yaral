@@ -1,0 +1,29 @@
+# T1564.010 — Process Argument Spoofing
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting argument-spoofed processes spawned from trusted Windows system processes.
+# Data Sources: Windows Process Events via Chronicle UDM
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Legitimate security and monitoring tools (AV, EDR agents) that use process injection or memory scanning to inspect process memory, Game anti-cheat software that injects into game processes using similar API patterns, Windows system processes: services.exe spawning svchost.exe children, csrss.exe internal operations, wininit.exe managing subsystem initialization, Debuggers and development tools (Visual Studio, WinDbg, x64dbg) that attach to processes and write memory during debugging sessions, IT management and RPA tools (UiPath, Automation Anywhere, some SCCM operations) that inject into processes for automation
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564.010
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule process_argument_spoofing {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects process argument spoofing via trusted parent process anomalies (T1564.010)"
+    severity = "HIGH"
+    tactic = "TA0005"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($e.principal.process.file.full_path, `(?i)(svchost|services|lsass|winlogon)\.exe`) nocase
+    re.regex($e.target.process.file.full_path, `(?i)(cmd|powershell|pwsh|wscript|cscript|rundll32|regsvr32|mshta)\.exe`) nocase
+    $e.target.process.command_line = "" or not $e.target.process.command_line != ""
+
+  condition:
+    $e
+}

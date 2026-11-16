@@ -1,0 +1,29 @@
+# T1608.006 — SEO Poisoning
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1608.006 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Web Proxy, Google Workspace
+# Required Sources: NETWORK_HTTP, PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Legitimate software downloads where users search for and directly download vendor-provided installers — particularly common for open-source tools, developer utilities, and freeware; mitigation: maintain an allowlist of trusted software vendor domains, IT administrators discovering and downloading troubleshooting or diagnostic tools via web search, particularly ZIP archives and MSI packages, Developer workflows where searching for SDK documentation leads to downloading JavaScript sample files or compressed source archives from official project sites, Automated patch management or software inventory agents using browser user-agents that may produce referrer headers resembling search engine traffic, Security researchers intentionally downloading samples from threat-sharing platforms or malware repositories that appear in search results
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1608.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_stage_capabilities {
+  meta:
+    author = "Argus"
+    description = "Detects staging of capabilities from external infrastructure"
+    severity = "HIGH"
+    technique = "T1608"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    (
+      re.regex($e.target.url, `\.(exe|dll|bin|ps1|bat|vbs|hta|sh|elf)($|\?)`) nocase or
+      re.regex($e.target.hostname, `transfer\.sh|paste\.ee|gofile\.io|anonfiles|temp\.sh`) nocase
+    )
+    $e.principal.process.file.full_path != ""
+  condition:
+    $e
+}

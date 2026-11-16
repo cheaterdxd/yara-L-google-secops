@@ -1,0 +1,49 @@
+# T1120 — Peripheral Device Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting peripheral device discovery (T1120).
+# Data Sources: Google Chronicle with Windows Event Log ingestion, Chronicle Unified Data Model (UDM), Chronicle with Sysmon log forwarding
+# Required Sources: UDM events (process launch category)
+# False Positives: Automated inventory systems using WMI-based discovery to maintain CMDB accuracy in enterprise environments, Remote monitoring and management (RMM) tools like ConnectWise or Kaseya querying device information during agent health checks, PowerShell DSC (Desired State Configuration) scripts auditing hardware compliance against organizational policies
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1120
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule peripheral_device_discovery_t1120 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects peripheral device discovery activity targeting USB, printer, disk, and PnP device enumeration via WMI, PowerShell, fsutil, and registry queries."
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1120"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1120/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path != ""
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(logicaldisk|diskdrive|USBHub|USBController|PhysicalMedia|CDROMDrive|Win32_USB|PnPEntity|printer)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(Win32_USBHub|Win32_USBController|Win32_DiskDrive|Win32_PhysicalMedia|Win32_CDROMDrive|Win32_PrinterConfiguration|Win32_Printer|Win32_PnPEntity|Win32_SoundDevice|Get-PnpDevice|GetDrives|Get-Volume|Get-Disk)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\fsutil\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)fsinfo\s+drives`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\reg\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(USBSTOR|Enum\\USB)`)
+      )
+    )
+
+  condition:
+    $e
+}

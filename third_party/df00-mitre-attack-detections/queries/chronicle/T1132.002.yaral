@@ -1,0 +1,72 @@
+# T1132.002 — Non-Standard Encoding
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules targeting T1132.002: (1) DNS rule groups NETWORK_DNS events by principal.hostname over 1-hour windows, matching first subdomain labels against Base64, URL-safe Base64, and hex encoding patterns; collects distinct queried names, process paths, and users in outcome fields for analyst triage.
+# Data Sources: Chronicle UDM (Unified Data Model) — NETWORK_DNS events, Chronicle UDM — NETWORK_HTTP events, Chronicle forwarder: Zeek DNS/HTTP, Windows Sysmon, Google Cloud DNS
+# Required Sources: udm_events (event_type: NETWORK_DNS), udm_events (event_type: NETWORK_HTTP)
+# False Positives: Cloud provider health check subdomains using Base64-encoded endpoint identifiers (AWS ALB, GCP GCLB, Azure Traffic Manager) — whitelist by target principal.hostname for known cloud provider FQDN suffixes, Mobile analytics SDKs encoding device fingerprints or crash report tokens as long Base64 strings in HTTP query parameters to vendor collection endpoints, Zero-trust network access and VPN solutions embedding encoded session certificates or ephemeral tokens in DNS-over-HTTPS subdomain labels for split-tunnel routing
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1132.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1132_002_non_standard_encoding_dns {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1132.002: Non-Standard Encoding — DNS subdomains with Base64, modified Base64, or hex-encoded first labels exceeding 50 characters. Covers TONESHELL, NightClub (DNS modified Base64), RDAT (Base64 with substitutions in DNS), and InvisiMole (modified Base32) families."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1132.002"
+    confidence = "MEDIUM"
+    false_positives = "CDN hash-based subdomains, ngrok/localtunnel proxy subdomains, DNS-based service mesh identifiers"
+    version = "1.0"
+
+  events:
+    $dns.metadata.event_type = "NETWORK_DNS"
+    $dns.network.dns.questions.name != ""
+    (
+      re.regex($dns.network.dns.questions.name, `^[A-Za-z0-9+/=]{50,}\.`) nocase or
+      re.regex($dns.network.dns.questions.name, `^[A-Za-z0-9_\-]{50,}\.`) nocase or
+      re.regex($dns.network.dns.questions.name, `^[0-9a-fA-F]{50,}\.`) nocase
+    )
+    $dns.principal.hostname != ""
+
+  match:
+    $dns.principal.hostname over 1h
+
+  outcome:
+    $event_count = count_distinct($dns.network.dns.questions.name)
+    $queried_names = array_distinct($dns.network.dns.questions.name)
+    $process_paths = array_distinct($dns.principal.process.file.full_path)
+    $users = array_distinct($dns.principal.user.userid)
+
+  condition:
+    $dns
+}
+
+rule t1132_002_non_standard_encoding_http {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1132.002: Non-Standard Encoding — HTTP/S requests with anomalously long path segments or query parameters consistent with custom Base64, XOR-encoded, or character-substituted C2 payloads transmitted over standard web protocols."
+    severity = "HIGH"
+    priority = "MEDIUM"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1132.002"
+    confidence = "MEDIUM"
+    false_positives = "SaaS platforms with long JWT tokens in URLs, package managers with hash-encoded integrity parameters"
+    version = "1.0"
+
+  events:
+    $http.metadata.event_type = "NETWORK_HTTP"
+    $http.network.http.method != ""
+    (
+      re.regex($http.target.url, `/[A-Za-z0-9_\-]{60,}(/|\?|$)`) nocase or
+      re.regex($http.target.url, `[?&][a-z]{1,4}=[A-Za-z0-9+/_%\-]{60,}`) nocase
+    )
+    $http.principal.hostname != ""
+
+  condition:
+    $http
+}

@@ -1,0 +1,46 @@
+# T1547.006 — Kernel Modules and Extensions
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting kernel module loading via standard Linux utilities and macOS kext tools.
+# Data Sources: Google Chronicle UDM, Linux endpoint telemetry, macOS endpoint telemetry
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: IT operations scripts using modprobe to load VPN kernel modules (wireguard, openvpn-tun) during network configuration changes, Hardware vendor agents loading proprietary drivers via insmod as part of firmware updates or diagnostics, Security research or malware analysis environments where rootkit samples are loaded in isolated VMs for behavioral analysis
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1547.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule lkm_rootkit_kernel_module_loading {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious kernel module loading via insmod, modprobe, kextload, or kextutil. Covers known LKM rootkits including Diamorphine, REPTILE, Phalanx, and Drovorub (T1547.006)."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1547.006"
+    reference = "https://attack.mitre.org/techniques/T1547/006/"
+    created = "2026-04-20"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $e.principal.process.file.full_path = /\/insmod$/ or
+      $e.principal.process.file.full_path = /\/modprobe$/ or
+      $e.principal.process.file.full_path = /\/kextload$/ or
+      $e.principal.process.file.full_path = /\/kextutil$/ or
+      (
+        $e.principal.process.file.full_path = /\/modinfo$/ and
+        (
+          $e.target.process.command_line = /\.ko/ or
+          $e.target.process.command_line = /rootkit/ or
+          $e.target.process.command_line = /diamorphine/ or
+          $e.target.process.command_line = /reptile/
+        )
+      ) or
+      $e.target.process.command_line = /(?i)(diamorphine|reptile|phalanx|drovorub|skidmap|hidden|stealth|backdoor)/
+    )
+
+  condition:
+    $e
+}

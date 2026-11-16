@@ -1,0 +1,39 @@
+# T1078.004 — Cloud Accounts
+# Tactic: Defense Evasion, Persistence, Privilege Escalation, Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule matching UDM USER_LOGIN events from Microsoft identity providers ingested into Google SecOps.
+# Data Sources: Microsoft Entra ID (Azure AD) via Chronicle Google SecOps Microsoft 365 integration, Microsoft 365 Audit Logs
+# Required Sources: UDM Events (event_type: USER_LOGIN), Reference List: cloud_suspicious_countries
+# False Positives: Diplomatic staff, journalists, or government contractors authenticating from embassy or office networks physically located in flagged countries, Risk score inflation caused by legitimate users completing MFA device enrollment, registering a new hardware token, or signing in from a newly provisioned corporate device for the first time, Single-factor authentication flows for service accounts or shared mailboxes explicitly excluded from MFA conditional access scope via approved policy exception documented in the IAM system
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1078.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1078_004_cloud_accounts_suspicious_signin {
+  meta:
+    author = "Detection Engineering"
+    description = "T1078.004 - Cloud Accounts: Detects suspicious Azure AD / Entra ID sign-ins including legacy auth protocol usage, logins from high-risk countries, elevated identity risk scores, and single-factor auth where conditional access policy was applied"
+    mitre_attack_technique = "T1078.004"
+    mitre_attack_tactic = "Initial Access, Persistence, Privilege Escalation, Defense Evasion"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2024-01-01"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.security_result.action = "ALLOW"
+    $e.metadata.vendor_name = "Microsoft"
+    $e.target.user.userid != ""
+
+    (
+      $e.principal.location.country_or_region in %cloud_suspicious_countries
+      or re.regex($e.network.http.user_agent, `(?i)(imap|pop3|smtp auth|basicauth|exchange.?activesync|autodiscover|exchange.?web.?services|authenticated.?smtp|outlook.?anywhere)`)
+      or $e.security_result.risk_score >= 50
+      or $e.security_result.severity = "HIGH"
+    )
+
+  condition:
+    $e
+}

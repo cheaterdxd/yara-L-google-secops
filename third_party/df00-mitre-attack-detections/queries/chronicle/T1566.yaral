@@ -1,0 +1,31 @@
+# T1566 — Phishing
+# Tactic: Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting spearphishing emails by attachment type and social engineering subject patterns.
+# Data Sources: Email Events via Chronicle UDM
+# Required Sources: EMAIL_TRANSACTION
+# False Positives: Automated marketing and newsletter platforms (Mailchimp, Constant Contact, HubSpot) that send bulk email from shared infrastructure may trigger SPF/DKIM mismatches if not properly configured, Internal security awareness phishing simulation platforms (KnowBe4, Proofpoint Security Awareness, Cofense) deliberately send fake phishing emails and should be allowlisted by sender domain, Vendors or partners sending invoices or payment requests from cloud document-sharing services (DocuSign, Adobe Sign, Dropbox) may match subject-line keywords while being fully legitimate, Email delivery failure notifications (NDRs, mailer-daemon bounces) forwarded through multiple hops may fail DMARC alignment without being malicious, Internal IT helpdesk emails requesting credential resets or account verification may match SuspiciousSubjectTerms
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1566
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule spearphishing_email_detection {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects spearphishing emails with suspicious attachments and subject lines (T1566)"
+    severity = "HIGH"
+    tactic = "TA0001"
+
+  events:
+    $e.metadata.event_type = "EMAIL_TRANSACTION"
+    (
+      re.regex($e.network.email.subject, `(?i)(invoice|payment|urgent|verify|suspended|confirm|breach|credential)`) nocase or
+      re.regex($e.principal.file.mime_type, `(?i)(executable|script|powershell|batch|vbscript|hta|iso|lnk)`) nocase or
+      re.regex($e.target.file.full_path, `(?i)\.(exe|dll|bat|ps1|vbs|js|hta|scr|lnk|docm|xlsm|iso|img)$`) nocase
+    )
+
+  condition:
+    $e
+}

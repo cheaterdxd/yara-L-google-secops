@@ -1,0 +1,85 @@
+# T1550.003 — Pass the Ticket
+# Tactic: Defense Evasion, Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules for Pass the Ticket detection: (1) PtT tool execution matching Mimikatz/Rubeus/Kekeo process names and command-line patterns for ticket injection commands; (2) RC4 Kerberos service ticket requests (Event 4769 with EncType 0x17) indicating possible ticket downgrade or Silver/Golden Ticket forgery; (3) Kerberos NewCredentials logon type 9 (Event 4624) used when a ticket is injected into a session for outbound lateral movement.
+# Data Sources: Google Chronicle UDM, Windows Security Event Log ingested via Chronicle forwarder, Endpoint telemetry via Chronicle agent
+# Required Sources: UDM events — PROCESS_LAUNCH, USER_UNCATEGORIZED, USER_LOGIN
+# False Positives: Security tooling or vulnerability scanners that spawn processes with Kerberos-related arguments in authorized testing environments, Environments with legacy RC4 Kerberos configurations for older applications will legitimately generate 4769 events with EncType 0x17, Administrators using runas /netonly to access network resources under alternate credentials generate type 9 logon events
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1550.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule pass_the_ticket_ptt_detection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Pass the Ticket (T1550.003) via known PtT tool execution and Kerberos anomalies"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1550.003"
+    severity = "CRITICAL"
+    priority = "HIGH"
+
+  events:
+    // Signal 1: PtT tool execution by process name
+    $e1.metadata.event_type = "PROCESS_LAUNCH"
+    $e1.principal.hostname = $hostname
+    (
+      re.regex($e1.target.process.file.full_path, `(?i)(mimikatz|rubeus|kekeo)\.exe$`) or
+      re.regex($e1.target.process.command_line, `(?i)(kerberos::ptt|sekurlsa::tickets|sekurlsa::krbtgt)`) or
+      re.regex($e1.target.process.command_line, `(?i)(asktgt|asktgs|tgtdeleg|s4u2self|s4u2proxy)`) or
+      re.regex($e1.target.process.command_line, `(?i)(/ptt|ptt\s+/ticket|/ticket:)`) or
+      re.regex($e1.target.process.command_line, `(?i)(ticketer|ticketConverter|getTGT|getST)`) or
+      re.regex($e1.target.process.command_line, `(?i)(harvest\s+/interval|dump\s+/nowrap)`) or
+      re.regex($e1.target.process.command_line, `(?i)\.(kirbi|ccache)`)
+    )
+
+  condition:
+    $e1
+}
+
+rule pass_the_ticket_rc4_kerberos {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects RC4 Kerberos service ticket requests (Event 4769, EncType 0x17) indicating possible Silver/Golden Ticket or PtT downgrade attack"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1550.003"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e2.metadata.event_type = "USER_UNCATEGORIZED"
+    $e2.metadata.product_event_type = "4769"
+    $e2.principal.hostname = $hostname
+    $e2.network.application_protocol = "KERBEROS"
+    // RC4 encryption type 0x17 indicates possible downgrade or ticket forgery
+    $e2.security_result.detection_fields["TicketEncryptionType"] = "0x17"
+    // Exclude machine accounts
+    not re.regex($e2.target.user.userid, `\$$`)
+    not re.regex($e2.target.resource.name, `\$$`)
+
+  condition:
+    $e2
+}
+
+rule pass_the_ticket_newcredentials_logon {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Kerberos logon type 9 (NewCredentials, Event 4624) used during PtT ticket injection for outbound lateral movement"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1550.003"
+    severity = "HIGH"
+    priority = "MEDIUM"
+
+  events:
+    $e3.metadata.event_type = "USER_LOGIN"
+    $e3.metadata.product_event_type = "4624"
+    $e3.principal.hostname = $hostname
+    $e3.extensions.auth.auth_details = "9"  // LogonType 9 = NewCredentials
+    $e3.extensions.auth.mechanism = "KERBEROS"
+    // Subject and target users must differ — impersonation indicator
+    $e3.principal.user.userid != $e3.target.user.userid
+
+  condition:
+    $e3
+}

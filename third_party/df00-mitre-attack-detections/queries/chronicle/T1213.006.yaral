@@ -1,0 +1,82 @@
+# T1213.006 — Databases
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting database data collection activity (T1213.006).
+# Data Sources: Google Chronicle UDM with Windows Sysmon or Defender for Endpoint telemetry, Chronicle Forwarder with endpoint process event ingestion
+# Required Sources: PROCESS_LAUNCH UDM events
+# False Positives: Scheduled backup automation that runs mysqldump or pg_dumpall under a service account, particularly if the backup system is web-accessible or triggered via a management portal spawning from an IIS worker, Database seeding or teardown scripts in containerised development environments where docker exec triggers psql or mongo commands that appear to originate from web server processes, Security scanning tools such as SQLMap or DB enumeration scripts run during authorised penetration tests that match bulk extraction command-line patterns
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1213.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1213_006_database_collection {
+  meta:
+    author = "df00tech Argus"
+    description = "Detects database data collection activity per MITRE ATT&CK T1213.006. Covers dump tool execution, webshell-driven database client access, bulk extraction flags, and scripting engine-spawned database clients."
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1213.006"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-19"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+
+    // Match dump tools or database clients
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(mysqldump|pg_dump|pg_dumpall|mongodump|sqlite3)(\.exe)?$`)
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)(mysql|sqlcmd|psql|mongo|mongosh|osql|bcp|isql)(\.exe)?$`)
+        and (
+          // Spawned by web server (webshell indicator)
+          re.regex($e.principal.process.file.full_path, `(?i)(w3wp|php-cgi|php|httpd|nginx|tomcat9|java)(\.exe)?$`)
+          or
+          // Spawned by suspicious scripting engine
+          re.regex($e.principal.process.file.full_path, `(?i)(wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?$`)
+          or
+          // Bulk extraction flags in command line
+          re.regex($e.target.process.command_line, `(?i)(--all-databases|--databases|into outfile|into dumpfile|select \* from|-e\s+.{0,10}select|-q\s+.{0,10}select)`)
+        )
+      )
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.target.process.file.full_path, `(?i)(mysqldump|pg_dump|pg_dumpall|mongodump|sqlite3)(\.exe)?$`), 30, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)(w3wp|php-cgi|php|httpd|nginx|tomcat9|java)(\.exe)?$`), 40, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)(wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?$`), 30, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)(--all-databases|--databases|into outfile|into dumpfile)`), 25, 0)
+    )
+    $detection_type = if(
+      re.regex($e.target.process.file.full_path, `(?i)(mysqldump|pg_dump|pg_dumpall|mongodump|sqlite3)(\.exe)?$`) and
+      re.regex($e.principal.process.file.full_path, `(?i)(w3wp|php-cgi|php|httpd|nginx|tomcat9|java)(\.exe)?$`),
+      "WebShellDumpToolExecution",
+      if(
+        re.regex($e.target.process.file.full_path, `(?i)(mysqldump|pg_dump|pg_dumpall|mongodump|sqlite3)(\.exe)?$`),
+        "DatabaseDumpToolExecution",
+        if(
+          re.regex($e.principal.process.file.full_path, `(?i)(w3wp|php-cgi|php|httpd|nginx|tomcat9|java)(\.exe)?$`),
+          "WebShellDatabaseClientAccess",
+          if(
+            re.regex($e.principal.process.file.full_path, `(?i)(wscript|cscript|mshta|rundll32|regsvr32)(\.exe)?$`),
+            "ScriptEngineSpawnedDBClient",
+            "BulkDatabaseExtraction"
+          )
+        )
+      )
+    )
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process = $e.target.process.file.full_path
+    $cmdline = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+
+  condition:
+    $e
+}

@@ -1,0 +1,45 @@
+# T1558.003 — Kerberoasting
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Kerberoasting via bulk RC4-encrypted Kerberos TGS ticket requests.
+# Data Sources: Google Chronicle with Windows Security Event Log ingestion via Bindplane OP or Chronicle Forwarder on Domain Controllers, Chronicle Google SecOps with Microsoft Windows Security Event Log UDM parser
+# Required Sources: UDM events with metadata.product_event_type = "4769"
+# False Positives: Environments where AES-only Kerberos has not been enforced via Group Policy (msDS-SupportedEncryptionTypes) will produce 4769/RC4 events for all service authentication, generating significant false positive volume — the count threshold of 5+ unique SPNs helps focus on anomalous bulk requests, Security assessment tools performing SPN enumeration or Kerberos compatibility checks (e.g. Kerbrute in enumerate mode, BloodHound collection runs using Kerberos auth) during authorized penetration tests — verify against change management calendar, Application servers acting as Kerberos constrained delegation proxies that request service tickets on behalf of many frontend users, resulting in high SPN request counts attributed to the delegation account's source IP
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1558.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1558_003_kerberoasting_rc4_tgs_bulk {
+  meta:
+    author = "Detection Engineer"
+    description = "Detects Kerberoasting — bulk RC4-encrypted TGS requests (Event 4769, etype 0x17) indicating automated SPN enumeration"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1558.003"
+    severity = "High"
+    reference = "https://attack.mitre.org/techniques/T1558/003/"
+
+  events:
+    $e.metadata.product_event_type = "4769"
+    not re.regex($e.principal.user.userid, `\$$`)
+    not re.regex($e.target.resource.name, `\$$`)
+    $e.target.resource.name != "krbtgt"
+    $e.additional.fields["TicketEncryptionType"] = "0x17"
+    $e.principal.user.userid = $user
+    $e.principal.ip = $ip
+    $e.target.resource.name = $spn
+
+  match:
+    $user, $ip over 1h
+
+  outcome:
+    $unique_spn_count = count_distinct($spn)
+    $tgs_request_count = count($e)
+    $alert_priority = if($unique_spn_count >= 20, "Critical",
+                         if($unique_spn_count >= 5, "High", "Medium"))
+    $is_bulk_kerberoast = ($unique_spn_count >= 5)
+
+  condition:
+    #e >= 5
+}

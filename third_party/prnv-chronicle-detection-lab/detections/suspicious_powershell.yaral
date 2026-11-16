@@ -1,0 +1,60 @@
+// ===================================================================
+// Detection: Suspicious PowerShell Execution
+// Author:    Pranav Barot
+// Platform:  Google Chronicle (YARA-L 2.0)
+// MITRE:     T1059.001 - Command and Scripting Interpreter: PowerShell
+// Severity:  High
+// ===================================================================
+//
+// Detects PowerShell processes launched with arguments commonly used
+// by adversaries to obfuscate intent or pull a second-stage payload:
+//   - Encoded commands (-EncodedCommand / -enc)
+//   - Execution policy bypass (-ExecutionPolicy bypass)
+//   - Profile suppression (-nop / -noprofile)
+//   - Window hiding (-w hidden)
+//   - Remote download cradles (IEX, Invoke-Expression, DownloadString,
+//     Net.WebClient, iwr, curl)
+//
+// Tuning notes:
+//   - Some legitimate admin scripts use -ExecutionPolicy bypass; combine
+//     with other indicators (encoded + bypass + hidden) before treating
+//     as high severity in production.
+
+rule suspicious_powershell {
+
+  meta:
+    author        = "Pranav Barot"
+    description   = "Detects suspicious PowerShell execution patterns (encoded, hidden, download cradles)"
+    severity      = "High"
+    mitre_attack_tactic    = "Execution"
+    mitre_attack_technique = "T1059.001"
+    reference     = "https://attack.mitre.org/techniques/T1059/001/"
+    version       = "1.0"
+    created       = "2026-06-25"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $e.target.process.file.full_path = /powershell(_ise)?\.exe$/ nocase or
+      $e.target.process.file.full_path = /pwsh\.exe$/ nocase
+    )
+    re.regex(
+      $e.target.process.command_line,
+      `(?i)(-enc(odedcommand)?\s|-nop(rofile)?\s|-w\s+hidden|-executionpolicy\s+bypass|IEX\s*\(|Invoke-Expression|DownloadString|Net\.WebClient|iwr\s+http|curl\s+http)`
+    )
+
+    $user  = $e.principal.user.userid
+    $host  = $e.principal.hostname
+
+  match:
+    $user, $host over 5m
+
+  outcome:
+    $risk_score              = max(70)
+    $command_line            = array_distinct($e.target.process.command_line)
+    $parent_process          = array_distinct($e.principal.process.file.full_path)
+    $mitre_technique         = "T1059.001"
+
+  condition:
+    $e
+}

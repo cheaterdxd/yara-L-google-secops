@@ -1,0 +1,52 @@
+# T1218.003 — CMSTP
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting CMSTP.exe process launch events with one or more suspicious indicators: silent install flags (/s, /au), no-UI flags (/ns, /ni), INF file references in user-writable directories (Temp, AppData, Downloads, Public, ProgramData), remote HTTP/HTTPS URL loading indicative of COM scriptlet or DLL staging, or suspicious parent process lineage from scripting engines or Office applications.
+# Data Sources: Google Chronicle SIEM, Google Chronicle UDM, Windows Endpoint Detection via Chronicle Forwarder
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate corporate VPN client installations initiated by IT deployment tools that spawn CMSTP from PowerShell or cmd.exe with silent flags and INF files staged in temporary directories, Security configuration management tools that install Connection Manager profiles as part of remote access provisioning workflows using CMSTP with /s and /au flags, Red team and penetration testing activities in authorized engagements simulating CMSTP-based AppLocker bypass or UAC bypass techniques on target systems
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1218_003_CMSTP_Suspicious_Execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects CMSTP.exe execution with indicators of malicious proxy execution: silent/auto-elevation flags, INF files from writable paths, remote URL loading, or suspicious scripting engine and Office application parent processes. Covers MuddyWater, Cobalt Group, CHIMNEYSWEEP, and LockBit 3.0 TTPs."
+    mitre_attack_technique = "T1218.003"
+    mitre_attack_tactic = "Defense Evasion"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1218/003/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)\\cmstp\.exe$`) or
+      re.regex($e.target.process.file.full_path, `(?i)/cmstp\.exe$`)
+    )
+    (
+      re.regex($e.target.process.command_line, `(?i)(/s|/au|/ns|/ni)`) or
+      re.regex($e.target.process.command_line, `(?i)\.inf`) or
+      re.regex($e.target.process.command_line, `(?i)https?://`) or
+      re.regex($e.target.process.command_line, `(?i)(temp|appdata|downloads|public|programdata|\\users\\)`) or
+      re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|wscript\.exe|cscript\.exe|mshta\.exe|winword\.exe|excel\.exe|outlook\.exe)$`)
+    )
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $cmdline = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+    $has_auto_close = if(re.regex($e.target.process.command_line, `(?i)(/s|/au)`), true, false)
+    $has_no_ui = if(re.regex($e.target.process.command_line, `(?i)(/ns|/ni)`), true, false)
+    $has_inf = if(re.regex($e.target.process.command_line, `(?i)\.inf`), true, false)
+    $has_remote_url = if(re.regex($e.target.process.command_line, `(?i)https?://`), true, false)
+    $has_suspicious_path = if(re.regex($e.target.process.command_line, `(?i)(temp|appdata|downloads|public|programdata)`), true, false)
+    $has_suspicious_parent = if(re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|wscript\.exe|cscript\.exe|mshta\.exe|winword\.exe|excel\.exe|outlook\.exe)$`), true, false)
+
+  condition:
+    $e
+}

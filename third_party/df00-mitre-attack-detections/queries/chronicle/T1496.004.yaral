@@ -1,0 +1,135 @@
+# T1496.004 — Cloud Service Hijacking
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Four YARA-L 2.0 rules detecting Cloud Service Hijacking (T1496.004) in Google Chronicle via UDM events sourced from AWS CloudTrail: (1) SES high-volume email sending >100/hr per identity/region (spam or phishing); (2) SNS high-volume publishing >200/hr per identity/region (SMS pumping); (3) Bedrock LLM invocations >50/hr per identity/region (LLMJacking — documented by Sysdig/Lacework); (4) service enablement followed by >10 usage events within 6 hours (DangerDev pattern — documented by Invictus IR).
+# Data Sources: AWS CloudTrail
+# Required Sources: UDM events (metadata.product_name = 'AWS CloudTrail')
+# False Positives: Terraform or CloudFormation deployments that call CreateEmailIdentity and then immediately validate the SES configuration with a test send — exclude known IaC execution role ARNs from rule 4, High-traffic production applications using SES or SNS through shared IAM roles will exceed thresholds during peak usage periods — create Chronicle reference lists for known high-volume service account ARNs, Bedrock-backed AI features in production SaaS products may exceed 50 invocations/hr during user traffic spikes — correlate with CloudWatch application metrics and exclude production service role ARNs
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1496.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule cloud_service_hijacking_aws_ses_high_volume {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects high-volume AWS SES email sending (>100 successful calls per identity per hour) indicating spam or phishing campaigns. MITRE ATT&CK T1496.004 Cloud Service Hijacking — Impact tactic. Documented threat actor: DangerDev (Invictus IR)."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1496.004"
+    severity = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1496/004/"
+    false_positives = "Bulk marketing email sends, transactional notification systems during peak traffic"
+
+  events:
+    $e.metadata.product_name = "AWS CloudTrail"
+    $e.target.application in nocase ["ses.amazonaws.com"]
+    $e.metadata.product_event_type in nocase [
+      "SendEmail", "SendRawEmail", "SendBulkTemplatedEmail",
+      "SendBulkEmail", "SendTemplatedEmail"
+    ]
+    NOT $e.security_result.action = "BLOCK"
+    $user_arn = $e.principal.user.userid
+    $region = $e.principal.location.name
+
+  match:
+    $user_arn, $region over 1h
+
+  condition:
+    #e > 100
+}
+
+rule cloud_service_hijacking_aws_sns_sms_pumping {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects high-volume AWS SNS publishing (>200 successful calls per identity per hour) indicating SMS pumping or bulk spam campaigns. MITRE ATT&CK T1496.004 Cloud Service Hijacking — Impact tactic. Documented toolkits: SNS Sender (SentinelOne research)."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1496.004"
+    severity = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1496/004/"
+    false_positives = "SMS OTP systems, mobile push notification infrastructure, CloudWatch alarm fanout"
+
+  events:
+    $e.metadata.product_name = "AWS CloudTrail"
+    $e.target.application in nocase ["sns.amazonaws.com"]
+    $e.metadata.product_event_type in nocase ["Publish", "PublishBatch"]
+    NOT $e.security_result.action = "BLOCK"
+    $user_arn = $e.principal.user.userid
+    $region = $e.principal.location.name
+
+  match:
+    $user_arn, $region over 1h
+
+  condition:
+    #e > 200
+}
+
+rule cloud_service_hijacking_aws_bedrock_llmjacking {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects high-frequency AWS Bedrock LLM invocations (>50 successful calls per identity per hour) indicating LLMJacking — adversaries using stolen credentials to proxy AI model inference and resell access. MITRE ATT&CK T1496.004. Documented campaigns by Sysdig and Lacework."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1496.004"
+    severity = "CRITICAL"
+    reference = "https://attack.mitre.org/techniques/T1496/004/"
+    false_positives = "ML batch inference pipelines, model evaluation jobs, AI-powered application backends during traffic spikes"
+
+  events:
+    $e.metadata.product_name = "AWS CloudTrail"
+    $e.target.application in nocase ["bedrock.amazonaws.com"]
+    $e.metadata.product_event_type in nocase [
+      "InvokeModel", "InvokeModelWithResponseStream",
+      "CreateModelInvocationJob", "InvokeAgent"
+    ]
+    NOT $e.security_result.action = "BLOCK"
+    $user_arn = $e.principal.user.userid
+    $region = $e.principal.location.name
+
+  match:
+    $user_arn, $region over 1h
+
+  condition:
+    #e > 50
+}
+
+rule cloud_service_hijacking_enable_then_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects the DangerDev pattern: a cloud SaaS service (SES, SNS, Bedrock) is enabled or configured by an identity, followed within 6 hours by high-volume API usage from the same identity. Indicates adversaries enabling previously dormant services to abuse at scale immediately after gaining access. MITRE ATT&CK T1496.004."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1496.004"
+    severity = "CRITICAL"
+    reference = "https://attack.mitre.org/techniques/T1496/004/"
+    false_positives = "Infrastructure-as-code deployments that provision and immediately test SaaS service endpoints"
+
+  events:
+    $enable.metadata.product_name = "AWS CloudTrail"
+    $enable.metadata.product_event_type in nocase [
+      "CreateEmailIdentity", "VerifyEmailIdentity", "PutIdentityPolicy",
+      "SetSMSAttributes", "CreateTopic",
+      "PutFoundationModelEntitlement", "CreateFoundationModelAgreement",
+      "PutModelInvocationLoggingConfiguration"
+    ]
+    NOT $enable.security_result.action = "BLOCK"
+
+    $abuse.metadata.product_name = "AWS CloudTrail"
+    $abuse.target.application in nocase [
+      "ses.amazonaws.com", "sns.amazonaws.com", "bedrock.amazonaws.com"
+    ]
+    $abuse.metadata.product_event_type in nocase [
+      "SendEmail", "SendRawEmail", "Publish", "PublishBatch",
+      "InvokeModel", "InvokeModelWithResponseStream"
+    ]
+    NOT $abuse.security_result.action = "BLOCK"
+
+    $enable.principal.user.userid = $abuse.principal.user.userid
+    $enable.metadata.event_timestamp.seconds < $abuse.metadata.event_timestamp.seconds
+
+    $user_arn = $enable.principal.user.userid
+
+  match:
+    $user_arn over 6h
+
+  condition:
+    #abuse > 10
+}

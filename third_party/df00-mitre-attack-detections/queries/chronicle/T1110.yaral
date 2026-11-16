@@ -1,0 +1,44 @@
+# T1110 — Brute Force
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule correlating USER_LOGIN BLOCK events (failed authentications) with a subsequent USER_LOGIN ALLOW event (success) from the same source IP to the same target host within a 10-minute sliding window.
+# Data Sources: Google Chronicle UDM USER_LOGIN events, Chronicle ingested Windows Security Event Log (normalized to UDM)
+# Required Sources: USER_LOGIN UDM events
+# False Positives: Corporate VPN concentrators performing NAT that map many remote employees' authentication attempts to a single egress IP, causing per-IP failure counts to exceed the threshold during high-traffic periods such as Monday mornings, Automated provisioning systems using Active Directory accounts for machine enrollment that attempt Kerberos pre-authentication multiple times before domain join completes, followed by successful enrollment, Security awareness training platforms that simulate brute force as part of phishing simulations, triggering controlled failure sequences from a known training infrastructure IP before a successful test-user login
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1110
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1110_brute_force_compromise {
+  meta:
+    author = "df00tech"
+    description = "Detects brute force: 10+ failed USER_LOGIN events from same source IP within 10 minutes followed by a successful login, indicating potential account compromise"
+    severity = "CRITICAL"
+    mitre_tactic = "TA0006 - Credential Access"
+    mitre_technique = "T1110"
+    platforms = "Windows"
+    false_positives = "SSO proxies, load testers, helpdesk resets"
+    version = "1.0"
+
+  events:
+    $failed.metadata.event_type = "USER_LOGIN"
+    $failed.security_result.action = "BLOCK"
+    $failed.principal.ip = $source_ip
+    $failed.target.hostname = $target_host
+    $failed.principal.ip != ""
+    $failed.target.hostname != ""
+
+    $success.metadata.event_type = "USER_LOGIN"
+    $success.security_result.action = "ALLOW"
+    $success.principal.ip = $source_ip
+    $success.target.hostname = $target_host
+    $success.metadata.event_timestamp.seconds > $failed.metadata.event_timestamp.seconds
+
+  match:
+    $source_ip, $target_host over 10m
+
+  condition:
+    #failed >= 10 and #success >= 1
+}

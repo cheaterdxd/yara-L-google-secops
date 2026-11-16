@@ -1,0 +1,89 @@
+# T1561.002 — Disk Structure Wipe
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1561.002 Disk Structure Wipe across six UDM detection vectors: PROCESS_LAUNCH for raw PhysicalDrive command-line access and wiper tool commands (dd.exe, diskpart.exe), FILE_CREATION for known wiper driver drops to user-writable paths, DRIVER_UNCATEGORIZED for wiper kernel driver loads, and SERVICE_UNSPECIFIED for kernel mode driver service installations from non-system directories.
+# Data Sources: Google Chronicle Unified Data Model (UDM), Chronicle Windows Event Log Forwarder, Chronicle Sysmon Parser, CrowdStrike Falcon Chronicle Integration
+# Required Sources: UDM Events
+# False Positives: Enterprise storage array management software and HBA drivers (LSI MegaRAID, Broadcom Emulex, Marvell RAID) that stage kernel drivers to non-system directories during firmware update or driver installation procedures, Legitimate forensic imaging operations by incident response or IT asset management teams using dd.exe with PhysicalDrive targets during evidence collection, disk duplication, or secure decommissioning workflows, Full-disk encryption deployment pipelines using VeraCrypt, McAfee Drive Encryption, or Sophos SafeGuard that create and install kernel drivers from %ProgramData% staging paths during initial volume encryption setup before copying to System32\drivers
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1561.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1561_002_disk_structure_wipe {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects disk structure wipe activity (T1561.002) including raw PhysicalDrive handle access, dd.exe/diskpart wiper tool commands, known wiper driver drops to user-writable paths, wiper kernel driver loads, and kernel mode driver service installations from non-system paths. Covers Shamoon (ElRawDisk), HermeticWiper (epmntdrv/EaseUS driver), WhisperGate, CaddyWiper, and KillDisk."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1561.002"
+    mitre_attack_technique_name = "Disk Structure Wipe"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+
+  events:
+    (
+      /* Vector 1: Raw PhysicalDrive handle in process command line */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.command_line, `(?i)physicaldrive`)
+      )
+      or
+      /* Vector 2: dd.exe targeting physical disk or wipe source devices */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i)\\dd\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(physicaldrive|if=/dev/zero|if=/dev/urandom)`)
+      )
+      or
+      /* Vector 3: diskpart.exe launched outside legitimate management console */
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i)\\diskpart\.exe$`)
+        and not re.regex($e.principal.process.file.full_path, `(?i)(mmc\.exe|diskmgmt\.msc|taskschd\.msc)`)
+      )
+      or
+      /* Vector 4: Known wiper driver file created in user-writable directory */
+      (
+        $e.metadata.event_type = "FILE_CREATION"
+        and re.regex($e.target.file.full_path, `(?i)\.sys$`)
+        and (
+          re.regex($e.target.file.full_path, `(?i)(elrawdsk|elrawdisk|epmntdrv|hermeticwiper|killdisk|caddywiper)`)
+          or re.regex($e.target.file.full_path, `(?i)\\(temp|appdata|programdata|users\\[^\\]+\\downloads)\\`)
+        )
+      )
+      or
+      /* Vector 5: Known wiper kernel driver load */
+      (
+        $e.metadata.event_type = "DRIVER_UNCATEGORIZED"
+        and re.regex($e.target.file.full_path, `(?i)(elrawdsk|elrawdisk|epmntdrv|hermeticwiper|killdisk)`)
+      )
+      or
+      /* Vector 6: Kernel mode driver service installed from non-system path (Event 7045) */
+      (
+        $e.metadata.event_type = "SERVICE_UNSPECIFIED"
+        and re.regex($e.target.resource.name, `(?i)kernel mode driver`)
+        and re.regex($e.target.file.full_path, `(?i)\\(temp|appdata|programdata|users|downloads)\\`)
+      )
+    )
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_path = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $file_path = $e.target.file.full_path
+    $event_type = $e.metadata.event_type
+    $risk_score = max(
+      if(re.regex($e.target.process.command_line, `(?i)physicaldrive`), 75, 0),
+      if(re.regex($e.target.file.full_path, `(?i)(elrawdsk|epmntdrv|hermeticwiper)`), 95, 0),
+      if($e.metadata.event_type = "SERVICE_UNSPECIFIED", 80, 0),
+      if($e.metadata.event_type = "DRIVER_UNCATEGORIZED", 90, 0),
+      60
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,71 @@
+# T1583.003 — Virtual Private Server
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting C2 beaconing to VPS-hosted infrastructure.
+# Data Sources: Chronicle UDM NETWORK_CONNECTION events from endpoint agents, Sysmon Event ID 3 parsed by Chronicle Windows Sysmon parser, CrowdStrike Falcon or Carbon Black EDR forwarded to Chronicle
+# Required Sources: UDM events (metadata.event_type = NETWORK_CONNECTION), Entity graph (principal.hostname, principal.process.file.full_path)
+# False Positives: Application performance monitoring (APM) agents such as AppDynamics, Dynatrace OneAgent, and New Relic APM make continuous high-frequency connections to their SaaS collectors; these agents run from non-browser process paths and will match this rule — exclude by process path regex after confirming the destination IP belongs to the APM vendor., Custom keepalive probes embedded in legacy in-house applications that heartbeat to a load balancer or health-check endpoint every few seconds will accumulate rapidly; identify via process name and correlate with application inventory to create targeted exclusions., Remote management and RMM agents (ConnectWise Automate ltsvc.exe, Kaseya, AnyDesk, TeamViewer) maintain persistent connections and reconnect frequently; correlate with IT asset management data and exclude approved RMM process hashes.
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1583.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1583_003_vps_c2_beaconing {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects C2 beaconing to VPS-hosted infrastructure — repeated outbound connections from non-browser processes to the same public IP within a 1-hour window."
+    mitre_attack_technique = "T1583.003"
+    mitre_attack_tactic = "TA0042 - Resource Development"
+    reference = "https://attack.mitre.org/techniques/T1583/003/"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+
+    // Exclude private, loopback, and link-local address space
+    not re.regex($e.target.ip, `^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|169\.254\.)`)
+    $e.target.ip != "::1"
+    $e.target.ip != ""
+
+    // Exclude known-safe browser processes
+    not re.regex($e.principal.process.file.full_path, `(?i)(chrome|firefox|msedge|MicrosoftEdgeCP|iexplore|brave|opera|safari|waterfox)\.exe`)
+
+    // Exclude common noisy system processes
+    not re.regex($e.principal.process.file.full_path, `(?i)(svchost|MsMpEng|wuauclt|TrustedInstaller|msiexec|ccmexec|teams|OneDrive)\.exe`)
+
+    // Bind aggregation dimensions
+    $hostname = $e.principal.hostname
+    $process  = $e.principal.process.file.full_path
+    $dest_ip  = $e.target.ip
+
+  match:
+    $hostname, $process, $dest_ip over 1h
+
+  outcome:
+    $connection_count  = count($e.metadata.id)
+    $unique_dest_ports = count_distinct($e.target.port)
+    $sample_cmdline    = array_distinct($e.principal.process.command_line)[0]
+    $risk_score = if(
+      $connection_count >= 50 and $unique_dest_ports <= 1, 95,
+      if($connection_count >= 30 and $unique_dest_ports <= 2, 75,
+        if($connection_count >= 20, 55, 30)
+      )
+    )
+    $beacon_risk = if(
+      $connection_count >= 50 and $unique_dest_ports <= 1,
+      "CRITICAL - Highly Regular Single-Port Beaconing",
+      if($connection_count >= 30 and $unique_dest_ports <= 2,
+        "HIGH - Low Port Variance Repetitive Connections",
+        if($connection_count >= 20,
+          "MEDIUM - Elevated Outbound Connection Frequency",
+          "LOW - Above Threshold Outbound Frequency"
+        )
+      )
+    )
+
+  condition:
+    $e and $connection_count >= 12
+}

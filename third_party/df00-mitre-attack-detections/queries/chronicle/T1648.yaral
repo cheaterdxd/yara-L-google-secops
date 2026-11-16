@@ -1,0 +1,36 @@
+# T1648 — Serverless Execution
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for detecting Serverless Execution (T1648).
+# Data Sources: AWS CloudTrail
+# Required Sources: RESOURCE_CREATION
+# False Positives: Legitimate DevOps CI/CD pipelines (GitHub Actions, Jenkins, AWS CodePipeline) using service accounts to regularly deploy Lambda or Azure Function updates as part of normal SDLC workflows, Infrastructure-as-code tooling (Terraform, AWS CDK, Pulumi, Bicep) creating or updating serverless resources during planned deployments — these typically originate from known CI/CD source IPs with consistent timing patterns, IT or business teams creating Power Automate flows for approved process automation such as SharePoint approval workflows, Teams notifications, or internal HR onboarding processes
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1648
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detection_t1648 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects Serverless Execution AWS activity - T1648"
+    severity = "HIGH"
+    mitre_attack = "T1648"
+    reference = "https://attack.mitre.org/techniques/T1648/"
+
+  events:
+    $e.metadata.event_type = "RESOURCE_CREATION"
+    $e.principal.user.userid = $actor
+    $e.principal.ip = $source_ip
+    $e.target.resource.name = $resource
+    (
+      $e.metadata.product_event_type in
+        ("LeaveOrganization", "CreateAccount", "SendCommand",
+         "CreateFunction20150331", "UpdateFunctionCode20150331v2") and
+      $e.metadata.vendor_name = "AMAZON"
+    )
+
+  condition:
+    $e
+}

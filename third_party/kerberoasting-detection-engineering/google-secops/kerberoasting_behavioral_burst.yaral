@@ -1,0 +1,41 @@
+rule kerberoasting_behavioral_tgs_burst {
+  meta:
+    author = "Gabriel Rocha"
+    description = "Detects a requestor and source address requesting tickets for many distinct target service principals in a short window. Implementation draft; not validated."
+    rule_version = "0.1.0"
+    status = "experimental"
+    validation = "not_compiled_or_tested"
+    platform = "Google Security Operations"
+    data_source = "Windows Security Event 4769"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1558.003"
+    reference = "https://attack.mitre.org/detectionstrategies/DET0157/"
+    severity = "MEDIUM"
+
+  events:
+    // Reference mapping for the WINEVTLOG_XML parser. Verify every field
+    // against the tenant's UDM view before compiling or enabling this rule.
+    $e.metadata.product_event_type = "4769"
+    $e.target.user.userid = $requestor
+    $e.principal.ip = $source_ip
+    $e.target.application = $target_service_principal
+
+    // Native Event 4769 status 0x0 means that the TGS request succeeded.
+    $e.additional.fields["Status"] = "0x0"
+
+    // Remove the KDC service account from this analytic's target scope.
+    $target_service_principal != /^krbtgt$/ nocase
+
+  match:
+    $requestor, $source_ip over 10m
+
+  outcome:
+    $event_count = count_distinct($e.metadata.id)
+    $distinct_target_count = count_distinct($target_service_principal)
+    $target_service_principals = array_distinct($target_service_principal)
+    $ticket_encryption_types = array_distinct($e.additional.fields["TicketEncryptionType"])
+    $detection_status = "IMPLEMENTATION_DRAFT_NOT_VALIDATED"
+
+  condition:
+    $e and $distinct_target_count >= 10
+}

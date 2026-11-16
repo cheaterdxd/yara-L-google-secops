@@ -1,0 +1,27 @@
+# T1602.001 — SNMP (MIB Dump)
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1602.001 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Network Traffic
+# Required Sources: NETWORK_CONNECTION, PROCESS_LAUNCH
+# False Positives: Legitimate network management platforms (SolarWinds Orion, PRTG, Nagios, Zabbix, LibreNMS) polling network devices via SNMP on UDP/161 for availability and performance monitoring — these generate high-volume, regular-interval SNMP traffic from known management server IPs, Network engineers manually running snmpwalk or snmpget to troubleshoot device configurations, verify SNMP community string setup, or validate OID responses during maintenance windows, Automated asset discovery tools (Nmap with snmp-info scripts, OpenNMS, Netdisco) performing scheduled network inventory scans that enumerate SNMP-capable devices, Authorized security assessments and vulnerability scans using SNMP enumeration modules (Metasploit auxiliary/scanner/snmp/snmp_enum, Nessus SNMP scanner, Qualys) during penetration testing engagements, IT operations runbooks where admins use snmpbulkwalk to baseline device configurations before and after maintenance changes
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1602.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_snmp_enumeration {
+  meta:
+    author = "Argus"
+    description = "Detects SNMP-based network device enumeration"
+    severity = "HIGH"
+    technique = "T1602"
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.target.port = 161
+    $e.network.ip_protocol = "UDP"
+    $e.network.sent_bytes > 1000
+  condition:
+    $e
+}

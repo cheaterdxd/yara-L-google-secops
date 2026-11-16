@@ -1,0 +1,89 @@
+# T1090.001 — Internal Proxy
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1090.001 Internal Proxy activity.
+# Data Sources: Windows Event Log via Chronicle ingestion, EDR telemetry (CrowdStrike, SentinelOne, Carbon Black), Sysmon forwarded events
+# Required Sources: UDM Events (process_launch, resource_creation)
+# False Positives: Authorized red team or penetration test engagements using chisel or ligolo-ng for simulated adversary C2 channel testing, System administrators using SSH with dynamic port forwarding (-D) for SOCKS proxy access to internal management networks, Application delivery or ADC configuration scripts invoking netsh portproxy to redirect ports for web application load balancing
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1090.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1090_001_internal_proxy_detection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1090.001 Internal Proxy - known proxy tool execution, netsh portproxy configuration, SSH tunneling, and named pipe patterns consistent with Cobalt Strike SMB beacons"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1090.001"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        // Known proxy tool binaries
+        re.regex($e.principal.process.file.full_path, `(?i)(htran|zxproxy|lcx\.exe|socat|chisel|ligolo|frpc|frps|earthworm|ew\.exe|gost|iox|revsocks|venom|pivotnacci|rpivot)$`)
+        or re.regex($e.target.process.command_line, `(?i)(htran|zxproxy|lcx[\s\.]|earthworm|chisel|ligolo|frpc|frps|gost[\s\.]|iox[\s\.]|revsocks|pivotnacci|rpivot)`)
+        // netsh portproxy add
+        or (
+          re.regex($e.target.process.file.full_path, `(?i)netsh\.exe$`)
+          and re.regex($e.target.process.command_line, `(?i)portproxy`)
+          and re.regex($e.target.process.command_line, `(?i)\badd\b`)
+        )
+        // SSH tunneling flags
+        or (
+          re.regex($e.target.process.file.full_path, `(?i)(ssh\.exe|plink\.exe)$`)
+          and re.regex($e.target.process.command_line, `(?i)(\s-[LRDw]\s|localforward|remoteforward|gatewayports|allowtcpforwarding)`)
+        )
+        // Port forwarding command patterns
+        or re.regex($e.target.process.command_line, `(?i)(v4tov4|listenport=|connectport=|connectaddress=|listenaddress=)`)
+      )
+    )
+    or
+    (
+      // Named pipe patterns consistent with Cobalt Strike SMB beacon
+      $e.metadata.event_type = "RESOURCE_CREATION"
+      and $e.target.resource.type = "NAMED_PIPE"
+      and re.regex($e.target.resource.name, `(?i)(msagent_|postex_|mojo\.|pipe\\\\status_|\\\\hazel|\\\\msse-)`)
+    )
+
+  match:
+    $e.principal.hostname over 1h
+
+  outcome:
+    $risk_score = max(
+      if(
+        re.regex($e.principal.process.file.full_path, `(?i)(htran|zxproxy|lcx\.exe|socat|chisel|ligolo|frpc|frps|earthworm|ew\.exe|gost|iox|revsocks|venom|pivotnacci|rpivot)$`),
+        85
+      ) + if(
+        re.regex($e.target.process.file.full_path, `(?i)netsh\.exe$`) and re.regex($e.target.process.command_line, `(?i)portproxy`) and re.regex($e.target.process.command_line, `(?i)\badd\b`),
+        70
+      ) + if(
+        re.regex($e.target.resource.name, `(?i)(msagent_|postex_|mojo\.|pipe\\\\status_|\\\\hazel|\\\\msse-)`),
+        90
+      )
+    )
+    $detection_type = if(
+      re.regex($e.principal.process.file.full_path, `(?i)(htran|zxproxy|lcx|socat|chisel|ligolo|frpc|frps|earthworm|gost|iox|revsocks|venom)`),
+      "KnownProxyTool",
+      if(
+        re.regex($e.target.process.file.full_path, `(?i)netsh\.exe$`) and re.regex($e.target.process.command_line, `(?i)portproxy`),
+        "NetshPortProxy",
+        if(
+          re.regex($e.target.process.file.full_path, `(?i)(ssh\.exe|plink\.exe)$`),
+          "SSHTunneling",
+          if(
+            re.regex($e.target.resource.name, `(?i)(msagent_|postex_|mojo\.)`),
+            "NamedPipeProxy",
+            "PortForwardCommand"
+          )
+        )
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,49 @@
+# T1059.011 — Lua
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Lua interpreter launch events or embedded Lua API call patterns in process command lines.
+# Data Sources: Chronicle UDM with Windows Sysmon forwarder, Chronicle UDM with Linux auditd/osquery forwarder, Chronicle native endpoint telemetry (CrowdStrike, Carbon Black, SentinelOne)
+# Required Sources: UDM entity graph - PROCESS_LAUNCH events
+# False Positives: OpenResty or Nginx with Lua module (ngx_lua) deployments where LuaJIT executes as part of web request handling, generating frequent io.open and socket calls that match network patterns, Hammerspoon (macOS automation tool) uses Lua extensively including os.execute and io.popen for system automation tasks like window management and hotkeys, Scientific computing or data analysis environments using LuaJIT through Torch/PyTorch legacy installations, where loadstring and require are normal module loading patterns
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.011
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule mitre_t1059_011_lua_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Lua interpreter execution or inline Lua API abuse indicative of T1059.011. Covers OS execution, network socket calls, dynamic script loading, and execution from temp paths."
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.011"
+    reference = "https://attack.mitre.org/techniques/T1059/011/"
+    created = "2026-04-16"
+    false_positives = "Game engines, Neovim plugins, OpenResty, Redis EVAL"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.command_line != ""
+
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(lua|luajit|luac)(5[\d.]*)?(\.exe)?$`) or
+      re.regex($e.target.process.command_line, `(?i)(\.lua[\s"']|dofile\s*\(|loadfile\s*\(|loadstring\s*\(|require\s*\(|os\.execute\s*\(|io\.popen\s*\(|socket\.tcp|socket\.connect|http\.request|ltn12\.pump|io\.open\s*\()`) or
+      re.regex($e.target.process.file.full_path, `(?i)lua[0-9]*(jit|c)?\.exe`)
+    )
+
+    (
+      re.regex($e.target.process.command_line, `(?i)(os\.execute|io\.popen|socket\.tcp|socket\.connect|http\.request|loadstring|loadfile|dofile)`) or
+      re.regex($e.target.process.file.full_path, `(?i)(lua|luajit|luac)(\.exe)?$`)
+    )
+
+    $host = $e.principal.hostname
+    $user = $e.principal.user.userid
+    $cmdline = $e.target.process.command_line
+    $proc = $e.target.process.file.full_path
+    $parent = $e.principal.process.file.full_path
+
+  condition:
+    $e
+}

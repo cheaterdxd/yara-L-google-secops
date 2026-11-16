@@ -1,0 +1,50 @@
+# T1546.008 — Accessibility Features
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1546.008 Accessibility Features persistence and privilege escalation.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM (Unified Data Model), Windows Event Logs via Chronicle forwarder, Sysmon via Chronicle Windows forwarder, Microsoft Defender for Endpoint via Chronicle integration
+# Required Sources: UDM Events (process_launch), UDM Events (registry_modification), UDM Events (file_creation)
+# False Positives: Windows Update TrustedInstaller service replacing accessibility binaries during cumulative patch installation — the principal.process.file.full_path will be TrustedInstaller.exe; add exclusion after verifying patch correlation in change management system, Enterprise deployment tools such as SCCM or Intune deploying accessibility software that overwrites default accessibility binaries — validate by checking if event correlates with an active deployment task in the endpoint management console, Accessibility technology vendors (e.g., Tobii Dynavox, Kurzweil) that register IFEO keys for legitimate application launching — maintain a Chronicle reference list of approved IFEO registry values and suppress known-good entries using Chronicle exclusion lists
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule accessibility_features_abuse_t1546_008 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1546.008 - Accessibility Features abuse via IFEO debugger keys, binary replacement, or suspicious process execution providing pre-logon SYSTEM shell access"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1546.008"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1546/008/"
+    rule_version = "1.0"
+    created = "2026-04-20"
+
+  events:
+    (
+      $process_exec.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($process_exec.target.process.file.full_path,
+        `(?i)(sethc|utilman|osk|magnify|narrator|displayswitch|atbroker)\.exe$`) and
+      not re.regex($process_exec.principal.process.file.full_path,
+        `(?i)(winlogon|svchost|explorer)\.exe$`)
+    )
+    or
+    (
+      $reg_mod.metadata.event_type = "REGISTRY_MODIFICATION" and
+      re.regex($reg_mod.target.registry.registry_key,
+        `(?i)\\Image File Execution Options\\(sethc|utilman|osk|magnify|narrator|displayswitch|atbroker)\.exe`) and
+      $reg_mod.target.registry.registry_value_name = /(?i)debugger/
+    )
+    or
+    (
+      $file_write.metadata.event_type = "FILE_CREATION" and
+      re.regex($file_write.target.file.full_path,
+        `(?i)\\(system32|syswow64)\\(sethc|utilman|osk|magnify|narrator|displayswitch|atbroker)\.exe$`)
+    )
+
+  condition:
+    $process_exec or $reg_mod or $file_write
+}

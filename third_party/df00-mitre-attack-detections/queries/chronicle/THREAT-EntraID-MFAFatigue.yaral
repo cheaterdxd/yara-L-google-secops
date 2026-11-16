@@ -1,0 +1,48 @@
+# THREAT-EntraID-MFAFatigue — Multi-Factor Authentication Fatigue (MFA Bombing) Attack
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting the MFA fatigue success pattern using UDM-normalised Azure AD events.
+# Data Sources: Azure Active Directory logs via Chronicle Google Cloud integration, Entra ID Sign-in Logs via Chronicle ingestion API with Azure AD parser
+# Required Sources: UDM events (Chronicle unified data model — USER_LOGIN category), Azure Active Directory Chronicle parser output
+# False Positives: Users who legitimately dismiss several push notifications because their phone is locked or Authenticator is backgrounded, then manually open the app and approve — generating the 3-fail/1-success pattern without any attacker involvement, Shared service account users where two operators simultaneously receive and interact with MFA prompts from different devices, with one declining and the other approving within the same window, Conditional Access policy changes or tenant configuration updates mid-session that force MFA re-evaluation, generating repeated FAIL events before the new policy evaluation resolves and allows an ALLOW
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-EntraID-MFAFatigue
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule mfa_fatigue_push_bombing {
+  meta:
+    author = "df00tech"
+    description = "Detects MFA fatigue push bombing: 3+ MFA failures followed by approval for same user within 10 minutes"
+    severity = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1621/"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1621"
+    threat_actors = "Scattered Spider, Lapsus$, 0ktapus"
+    false_positives = "Legitimate MFA issues; device-switching during auth flow"
+    version = "1.0"
+
+  events:
+    $mfa_fail.metadata.event_type = "USER_LOGIN"
+    $mfa_fail.metadata.product_name = "Azure Active Directory"
+    $mfa_fail.extensions.auth.auth_details = "multiFactorAuthentication"
+    $mfa_fail.security_result.action = "FAIL"
+    $mfa_fail.principal.user.email_addresses = $user
+
+    $mfa_success.metadata.event_type = "USER_LOGIN"
+    $mfa_success.metadata.product_name = "Azure Active Directory"
+    $mfa_success.extensions.auth.auth_details = "multiFactorAuthentication"
+    $mfa_success.security_result.action = "ALLOW"
+    $mfa_success.principal.user.email_addresses = $user
+
+    $mfa_fail.metadata.event_timestamp.seconds <
+      $mfa_success.metadata.event_timestamp.seconds
+
+  match:
+    $user over 10m
+
+  condition:
+    #mfa_fail >= 3 and #mfa_success >= 1
+}

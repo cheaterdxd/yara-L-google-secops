@@ -1,0 +1,54 @@
+# T1059.010 — AutoHotKey & AutoIT
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting AutoIT and AutoHotKey execution aligned with T1059.010.
+# Data Sources: Google Chronicle UDM, Windows Endpoint Events via Chronicle forwarder, Sysmon via Chronicle
+# Required Sources: process_events UDM
+# False Positives: IT automation tooling built on AutoHotKey for service desk workflows including automated form submission or ticketing system integrations, Software deployment pipelines that use AutoIT-compiled executables to automate silent installations of applications across the enterprise fleet, Security awareness or red team training exercises where AutoIT/AHK scripts are intentionally executed in controlled environments
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.010
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule autoit_ahk_execution_t1059_010 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects AutoIT and AutoHotKey script execution indicative of MITRE ATT&CK T1059.010. Covers DarkGate, Lumma Stealer, APT39, and XLoader TTPs."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.010"
+    reference = "https://attack.mitre.org/techniques/T1059/010/"
+    created = "2026-04-16"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(AutoIt3\.exe|AutoHotkey\.exe|AutoHotkeyU64\.exe|AutoHotkeyU32\.exe)$`) or
+      re.regex($e.target.process.command_line, `(?i)(AutoIt3\.exe|AutoHotkey|AutoIt|AutoHotkeyU)`) or
+      re.regex($e.target.process.command_line, `(?i)\.(au3|ahk)(\s|$|"|')`) or
+      re.regex($e.target.process.command_line, `(?i)(URLDownloadToFile|_WinHttpSimpleRequest|ShellExecute\(|FileInstall\(|DllCall\()`) or
+      re.regex($e.target.process.command_line, `(?i)(Hotkey,|SetKeyDelay,|SendInput,|SendRaw,|Send,)`)
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.target.process.command_line, `(?i)(\\Temp\\|\\tmp\\|AppData)`), 20, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)(URLDownloadToFile|_WinHttpSimpleRequest|Inet\.au3)`), 20, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)DllCall\(`), 20, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)(Hotkey,|SetKeyDelay,|SendInput,)`), 20, 0) +
+      if(re.regex($e.target.process.file.full_path, `(?i)(AutoIt3\.exe|AutoHotkey)`), 10, 0)
+    )
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_name = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+
+  condition:
+    $e and $risk_score > 20
+}

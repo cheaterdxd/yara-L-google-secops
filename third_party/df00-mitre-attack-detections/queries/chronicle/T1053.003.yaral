@@ -1,0 +1,68 @@
+# T1053.003 — Cron
+# Tactic: Execution, Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1053.003 cron persistence via three patterns: (1) crontab command execution combined with suspicious payload indicators (downloaders, reverse shells, temp paths), (2) direct file creation in cron directories from non-package-manager processes, and (3) modification of core cron configuration files.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM), Linux endpoint telemetry via Chronicle forwarder
+# Required Sources: UDM events: PROCESS_LAUNCH, FILE_CREATION, FILE_MODIFICATION
+# False Positives: Package managers (apt, yum, rpm, dpkg) writing cron job files to /etc/cron.d/ during software installation or upgrade, Infrastructure-as-code tools (Ansible playbooks, Puppet manifests, Chef recipes) creating cron entries as part of configuration management, Backup and monitoring software (Bacula, Nagios, Zabbix) that installs its own scheduled tasks in cron directories during initial setup
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1053.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1053_003_cron_persistence {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1053.003 - Cron persistence abuse via crontab commands and direct cron file writes with suspicious payload indicators"
+    mitre_attack_tactic = "Persistence, Privilege Escalation, Execution"
+    mitre_attack_technique = "T1053.003"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      // Pattern 1: crontab command execution with suspicious args
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        $e1.principal.process.file.full_path = "/usr/bin/crontab"
+        or $e1.principal.process.file.full_path = "/bin/crontab"
+        or re.regex($e1.target.process.command_line, `(?i)crontab\s+-[elr]`)
+      )
+      and (
+        re.regex($e1.target.process.command_line, `(?i)(wget|curl|nc\s|ncat|netcat|/dev/tcp|base64\s+-d|openssl\s+enc|bash\s+-i|python\s+-c|perl\s+-e|/tmp/|/dev/shm/|chmod\s+\+x|chmod\s+777|@reboot)`)
+        or re.regex($e1.principal.process.command_line, `(?i)(wget|curl|/dev/tcp|base64|/tmp/|/dev/shm/)`)
+      )
+    )
+    or
+    (
+      // Pattern 2: direct file write to cron directories
+      $e1.metadata.event_type = "FILE_CREATION"
+      and (
+        re.regex($e1.target.file.full_path, `/etc/crontab`)
+        or re.regex($e1.target.file.full_path, `/var/spool/cron/`)
+        or re.regex($e1.target.file.full_path, `/etc/cron\.d/`)
+        or re.regex($e1.target.file.full_path, `/etc/cron\.(daily|hourly|weekly|monthly)/`)
+        or re.regex($e1.target.file.full_path, `/var/cron/tabs/`)
+      )
+      and not (
+        $e1.principal.process.file.full_path = "/usr/bin/dpkg"
+        or $e1.principal.process.file.full_path = "/usr/bin/apt"
+        or $e1.principal.process.file.full_path = "/usr/bin/yum"
+        or $e1.principal.process.file.full_path = "/usr/bin/rpm"
+        or re.regex($e1.principal.process.file.full_path, `(?i)(ansible|puppet|chef|salt)`)
+      )
+    )
+    or
+    (
+      // Pattern 3: file modification to cron directories with suspicious content indicators
+      $e1.metadata.event_type = "FILE_MODIFICATION"
+      and (
+        re.regex($e1.target.file.full_path, `/etc/crontab`)
+        or re.regex($e1.target.file.full_path, `/var/spool/cron/`)
+        or re.regex($e1.target.file.full_path, `/etc/cron\.d/`)
+      )
+    )
+
+  condition:
+    $e1

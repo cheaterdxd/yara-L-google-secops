@@ -1,0 +1,61 @@
+# T1552.007 — Container API
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1552.007 container API credential access across four behavioral patterns using UDM: kubectl secret/serviceaccount enumeration via process command line analysis, Docker CLI subcommands used for credential extraction, unauthorized process access to the Docker Unix socket, and Kubernetes API server audit events capturing secret reads from non-system principals.
+# Data Sources: Google Chronicle UDM via GCP audit log ingestion, Linux endpoint telemetry forwarded to Chronicle, Kubernetes API server audit logs ingested via Chronicle forwarder
+# Required Sources: UDM events with event_type PROCESS_LAUNCH, UDM events with event_type FILE_OPEN, UDM events with event_type RESOURCE_READ from Kubernetes product
+# False Positives: Vault Agent injectors or External Secrets Operators running inside Kubernetes that legitimately GET secrets from the API server to inject them into pod environments, Docker-in-Docker (DinD) CI/CD builds where the inner Docker daemon accesses the outer docker.sock through a bind mount, appearing as unauthorized access, Security operations teams running Peirates, kube-hunter, or similar audit tools against their own clusters as part of authorized red team or vulnerability assessment exercises
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1552.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule container_api_credential_access {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1552.007 — credential access via Docker and Kubernetes container APIs, including kubectl secret enumeration, Docker CLI credential extraction, docker.sock unauthorized access, and Kubernetes API secret reads."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1552.007"
+    mitre_attack_subtechnique = "Container API"
+    reference = "https://attack.mitre.org/techniques/T1552/007/"
+
+  events:
+    (
+      // Pattern 1: kubectl targeting secrets, service accounts, configmaps
+      $kubectl_event.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($kubectl_event.target.process.file.full_path, `(^|/)kubectl$`)
+      and (
+        re.regex($kubectl_event.target.process.command_line, `kubectl\s+(get|describe|edit|patch)\s+(secret|secrets|sa|serviceaccount|serviceaccounts|configmap|configmaps)`)
+        or re.regex($kubectl_event.target.process.command_line, `kubectl\s+exec\s+`)
+        or re.regex($kubectl_event.target.process.command_line, `kubectl\s+logs\s+`)
+        or re.regex($kubectl_event.target.process.command_line, `kubectl\s+get\s+pods\s+-o`)
+      )
+    )
+    or (
+      // Pattern 2: Docker CLI credential extraction
+      $docker_event.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($docker_event.target.process.file.full_path, `(^|/)docker$`)
+      and re.regex($docker_event.target.process.command_line, `docker\s+(inspect|logs|exec|env|cp|run)`)
+      and re.regex($docker_event.target.process.command_line, `(pass|secret|token|credential|key|aws|gcp|azure)`)
+    )
+    or (
+      // Pattern 3: Unauthorized docker.sock access
+      $sock_event.metadata.event_type = "FILE_OPEN"
+      and $sock_event.target.file.full_path = "/var/run/docker.sock"
+      and not re.regex($sock_event.principal.process.file.full_path, `(^|/)(dockerd|containerd|docker-proxy|docker|moby|cri-dockerd)$`)
+    )
+    or (
+      // Pattern 4: Kubernetes API audit — secret enumeration
+      $k8s_event.metadata.event_type = "RESOURCE_READ"
+      and $k8s_event.metadata.product_name = "Kubernetes"
+      and $k8s_event.target.resource.type = "secrets"
+      and $k8s_event.network.http.method = "GET"
+      and not re.regex($k8s_event.principal.user.userid, `^system:(serviceaccount:kube-system:|node:)`)
+    )
+
+  condition:
+    $kubectl_event or $docker_event or $sock_event or $k8s_event
+}

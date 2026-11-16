@@ -1,0 +1,63 @@
+# T1046 — Network Service Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting T1046 network service discovery via three detection branches: (1) direct execution of known scanning tool binaries, (2) native PowerShell or cmd.exe LOLBin patterns using TCP socket objects, Test-NetConnection, netstat, arp, or net view, and (3) explicit nmap-style scan flag arguments such as -sS, -sV, --top-ports, and --script present in any process command line.
+# Data Sources: Google Chronicle UDM via Bindplane/Chronicle Forwarder ingesting Windows Sysmon (Event ID 1), Chronicle Endpoint Detection and Response telemetry, Windows Event Logs forwarded to Chronicle via Chronicle Forwarder or ingestion API
+# Required Sources: UDM Event type PROCESS_LAUNCH, target.process.file.full_path, target.process.command_line, principal.hostname
+# False Positives: Authorised red team or penetration testing engagements where nmap or masscan is executed from a designated attack host — these should be excluded by principal.hostname allowlist or time-window suppression tied to the engagement change record, Network monitoring daemons or SNMP discovery services that spawn short-lived processes with port-probe arguments as part of scheduled topology mapping, System administrators using PowerShell remoting health-check scripts that iterate IP ranges with Test-NetConnection to validate network segmentation rules after firewall changes
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1046
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1046_network_service_discovery {
+  meta:
+    author = "Detection Engineering — Argus Platform"
+    description = "Detects network service discovery via known scanning tool execution or native LOLBin port-scan patterns consistent with internal reconnaissance before lateral movement"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1046"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1046/"
+    severity = "HIGH"
+    priority = "HIGH"
+    created = "2026-04-17"
+    confidence = "HIGH"
+    threat_actors = "Volt Typhoon, APT39, BlackTech, menuPass, FIN13, BlackByte ransomware"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      /* Branch 1: Known scanning tool binary execution */
+      re.regex(
+        $e.target.process.file.full_path,
+        `(?i)(nmap\.exe|masscan\.exe|zmap\.exe|netscan\.exe|tcping\.exe|superscan\.exe|angryipscan\.exe|nbtscan\.exe|nbtscan-unixwiz\.exe|winegddrop\.exe|rustscan|netdiscover|unicornscan)`
+      )
+      or
+      /* Branch 2: Native LOLBin with scanning CLI patterns */
+      (
+        re.regex(
+          $e.target.process.file.full_path,
+          `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe)`
+        )
+        and re.regex(
+          $e.target.process.command_line,
+          `(?i)(test-netconnection|tnc\s|[Nn]et\.Sockets\.TcpClient|System\.Net\.Sockets|1\.\.254|1\.\.65535|netstat\s+-a|arp\s+-a|net\s+view|net\s+use\\\\|route\s+print|new-object\s+net\.sockets)`
+        )
+      )
+      or
+      /* Branch 3: Scanning CLI flags in any process */
+      (
+        re.regex(
+          $e.target.process.command_line,
+          `(\s-sS\s|\s-sT\s|\s-sU\s|\s-sV\s|\s-sn\s|--top-ports|--script\s|--rate\s|\s-Pn\s|\s-p\s[0-9])`
+        )
+        and not re.regex(
+          $e.target.process.command_line,
+          `(?i)(--version|--help|install|update|man\s)`
+        )
+      )
+    )
+
+  condition:
+    $e
+}

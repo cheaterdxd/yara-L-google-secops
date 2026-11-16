@@ -1,0 +1,58 @@
+# T1562.004 — Disable or Modify System Firewall
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting firewall disablement or modification via process launches containing firewall management command patterns across Windows (netsh, PowerShell) and Linux/BSD (iptables, ufw, pfctl) and VMware ESXi (esxcli).
+# Data Sources: Google Chronicle UDM, Windows Sysmon via Chronicle forwarder, Linux Auditd via Chronicle forwarder, CrowdStrike Falcon via Chronicle integration
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate use of configuration management automation (Ansible, Terraform) deploying firewall rule changes during infrastructure provisioning recorded in change management systems., System administrators executing documented firewall policy updates during approved maintenance windows, particularly on hardened build pipelines., Security operations center analysts intentionally disabling firewall rules on isolated sandbox machines for malware analysis or threat emulation exercises.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1562.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule disable_or_modify_system_firewall {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects attempts to disable or modify system firewalls via netsh, iptables, ufw, pfctl, PowerShell cmdlets, or esxcli on Windows, Linux, or ESXi hosts."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1562.004"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-20"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.command_line, `(?i)netsh\s+advfirewall\s+set`) or
+      re.regex($e.target.process.command_line, `(?i)netsh\s+advfirewall\s+firewall\s+(add|delete)`) or
+      re.regex($e.target.process.command_line, `(?i)netsh\s+firewall\s+set\s+opmode\s+disable`) or
+      re.regex($e.target.process.command_line, `(?i)Set-NetFirewallProfile.{0,50}-Enabled\s+False`) or
+      re.regex($e.target.process.command_line, `(?i)(New|Remove)-NetFirewallRule`) or
+      re.regex($e.target.process.command_line, `(?i)iptables\s+(-F|-X|-P\s+INPUT\s+ACCEPT|-P\s+FORWARD\s+ACCEPT)`) or
+      re.regex($e.target.process.command_line, `(?i)ufw\s+disable`) or
+      re.regex($e.target.process.command_line, `(?i)pfctl\s+-d`) or
+      re.regex($e.target.process.command_line, `(?i)esxcli\s+network\s+firewall\s+set`)
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $firewall_action = if(
+      re.regex($e.target.process.command_line, `(?i)(state off|opmode disable|Enabled.*False|ufw disable|pfctl -d)`), "Firewall Disabled",
+      re.regex($e.target.process.command_line, `(?i)(firewall add|New-NetFirewallRule)`), "Rule Added",
+      re.regex($e.target.process.command_line, `(?i)(firewall delete|Remove-NetFirewallRule)`), "Rule Deleted",
+      re.regex($e.target.process.command_line, `(?i)iptables -[FX]`), "IPTables Flushed",
+      re.regex($e.target.process.command_line, `(?i)iptables -P.*ACCEPT`), "IPTables Policy ACCEPT",
+      "Other Modification"
+    )
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_name = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+
+  condition:
+    $e
+}

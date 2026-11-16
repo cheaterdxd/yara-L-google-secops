@@ -1,0 +1,27 @@
+# T1592.004 — Client Configurations
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule for Client Configurations (T1592.004).
+# Data Sources: Google Chronicle SIEM, Chronicle UDM
+# Required Sources: USER_LOGIN, USER_RESOURCE_ACCESS
+# False Positives: Web analytics platforms (Google Analytics, Mixpanel, Amplitude) use POST requests to similar collection endpoint paths for behavioral telemetry — allowlist known analytics vendor domains in the ScanBoxCollectionPaths branch, Security awareness training platforms (KnowBe4, Proofpoint Security Awareness) simulate watering hole fingerprinting for phishing simulation campaigns and will generate matching proxy log events, Internal application performance monitoring tools (Dynatrace RUM, New Relic Browser) collect client configuration data via JavaScript agents that POST to similarly named endpoints, Legitimate service principal integrations with Office 365 using automated credentials (Python SDKs, Azure CLI, MSAL libraries) will trigger the O365 tenant enumeration branch — filter by registered application client IDs if known
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1592.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1592_004_client_configurations {
+  meta:
+    author = "df00tech"
+    description = "Detects Client Configurations (T1592.004)"
+    mitre_attack_tactic = "TA0043"
+    mitre_attack_technique = "T1592.004"
+    confidence = "low"
+    severity = "medium"
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.command_line != ""
+  condition:
+    $e
+}

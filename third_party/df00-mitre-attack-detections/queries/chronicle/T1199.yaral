@@ -1,0 +1,61 @@
+# T1199 — Trusted Relationship
+# Tactic: Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1199 Trusted Relationship abuse using UDM-normalized Azure AD and Office 365 events.
+# Data Sources: Azure Active Directory (Chronicle UDM: product_name=Azure Active Directory), Office 365 (Chronicle UDM: product_name=Office 365), Microsoft 365 (Chronicle UDM: product_name=Microsoft 365)
+# Required Sources: azure_ad (Chronicle ingestion label), o365 (Chronicle ingestion label)
+# False Positives: Authorized Microsoft Partner Center resellers creating or updating delegated admin relationships as part of contractual Tier 1/Tier 2 support delivery — fires on both initial grant and any periodic renewal, B2B collaboration guests from established partner organizations accessing shared SharePoint document libraries or Teams project workspaces as part of ongoing joint ventures or co-development programs, Identity governance workflows that periodically re-assign privileged roles to external security or audit accounts during compliance review cycles, generating GROUP_MODIFICATION events in bursts
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1199
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1199_trusted_relationship_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects trusted relationship abuse via Azure AD delegated admin grants, cross-tenant access policy changes, and privileged role grants to external or guest accounts"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1199"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1199/"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $e.metadata.product_name = /(?i)(Azure Active Directory|Office 365|Microsoft 365)/
+
+    (
+      (
+        // Arm 1: Delegated admin grants and partner/cross-tenant configuration changes
+        $e.metadata.event_type = "USER_RESOURCE_CREATION" and
+        (
+          $e.target.resource.name = /(?i)(delegated.permission|cross.?tenant|partner.access|service.principal)/ or
+          $e.metadata.description = /(?i)(delegated permission|cross.tenant|partner|role.assignment)/
+        )
+      ) or
+      (
+        // Arm 2: Privileged group membership granted to external or guest accounts
+        $e.metadata.event_type = "GROUP_MODIFICATION" and
+        $e.target.group.group_display_name = /(?i)(Global Admin|Privileged Role|Exchange Admin|SharePoint Admin|Security Admin|Helpdesk Admin|User Admin)/ and
+        (
+          $e.target.user.email_addresses[0] = /#EXT#/ or
+          $e.target.user.userid = /#EXT#/ or
+          $e.target.user.user_display_name = /(?i)(msp|vendor|partner|managed.service|contractor)/
+        )
+      ) or
+      (
+        // Arm 3: Cross-tenant or B2B user sign-in to sensitive Microsoft 365 workloads
+        $e.metadata.event_type = "USER_LOGIN" and
+        $e.target.resource.name = /(?i)(Exchange Online|SharePoint Online|Microsoft Teams|Security Center|Compliance Center|Microsoft Graph|Azure Active Directory)/ and
+        (
+          $e.extensions.auth.auth_details = /(?i)(cross.?tenant|B2B|guest|external|inbound)/ or
+          $e.principal.user.email_addresses[0] = /#EXT#/
+        ) and
+        $e.security_result.action = "ALLOW"
+      )
+    )
+
+  condition:
+    $e
+}

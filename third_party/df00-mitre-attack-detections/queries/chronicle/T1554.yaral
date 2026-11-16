@@ -1,0 +1,51 @@
+# T1554 — Compromise Host Software Binary
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting host software binary compromise via file creation/modification events in critical system binary directories from non-trusted processes, and version-lock commands used to prevent updates from restoring legitimate binaries (UNC3886 TTP).
+# Data Sources: Chronicle UDM: Sysmon (via Forwarder), Chronicle UDM: Windows Event Logs, Chronicle UDM: Linux Auditd / Syslog, Chronicle UDM: CrowdStrike Falcon, Chronicle UDM: Carbon Black
+# Required Sources: UDM Events (FILE_CREATION, FILE_MODIFICATION, FILE_MOVE, PROCESS_LAUNCH)
+# False Positives: Enterprise software deployment tools (SCCM, Intune, Jamf) that write binaries to system paths using service accounts that don't match the TrustedInstaller exclusion pattern, Automated CI/CD pipelines on developer workstations that compile and install custom builds of open-source tools (OpenSSH, curl) directly into /usr/bin or Windows system directories, IT operations teams running scripts that invoke apt-mark hold to pin a specific working version of a system tool after a bad update — a legitimate operational practice
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1554
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1554_compromise_host_software_binary {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects modification of critical host software binaries by non-legitimate processes (T1554). Covers Windows system binary directories and Linux utility paths. Also detects version-lock commands used to persist trojanized binaries."
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1554"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1554/"
+
+  events:
+    // Arm 1: File creation or modification in critical binary paths
+    (
+      $e.metadata.event_type = "FILE_CREATION" OR
+      $e.metadata.event_type = "FILE_MODIFICATION" OR
+      $e.metadata.event_type = "FILE_MOVE"
+    ) and
+    (
+      re.regex($e.target.file.full_path, `(?i)(c:\\windows\\system32\\|c:\\windows\\syswow64\\|c:\\program files\\openssh\\|c:\\program files.*\\bin\\|/usr/bin/|/usr/sbin/|/bin/|/sbin/)`) OR
+      re.regex($e.target.file.full_path, `(?i)(/usr/local/bin/|/usr/local/sbin/)`) 
+    ) and
+    re.regex($e.target.file.full_path, `(?i)(ssh\.exe|sshd\.exe|sftp\.exe|curl\.exe|wget\.exe|putty\.exe|winscp\.exe|filezilla\.exe|chrome\.exe|firefox\.exe|msedge\.exe|iexplore\.exe|notepad\.exe|cmd\.exe|powershell\.exe|pwsh\.exe|taskmgr\.exe|regedit\.exe|mstsc\.exe|lsass\.exe|/ssh$|/sshd$|/sftp$|/curl$|/wget$|/sudo$|/su$)`) and
+    not re.regex($e.principal.process.file.full_path, `(?i)(msiexec\.exe|trustedinstaller\.exe|wusa\.exe|setup\.exe|install\.exe|windowsupdate|packagekitd|/dpkg$|/rpm$|/apt-get$|/apt$|/yum$|/dnf$|/zypper$)`) and
+    $e.principal.hostname = $hostname
+
+  OR
+
+    // Arm 2: Version-lock commands
+    $e.metadata.event_type = "PROCESS_LAUNCH" and
+    (
+      re.regex($e.target.process.command_line, `(?i)(versionlock|yum-versionlock|apt-mark\s+hold|dpkg\s+--set-selections|apt-mark\s+unhold)`) OR
+      re.regex($e.principal.process.command_line, `(?i)(versionlock|yum-versionlock|apt-mark\s+hold|dpkg\s+--set-selections|apt-mark\s+unhold)`)
+    ) and
+    $e.principal.hostname = $hostname
+
+  condition:
+    $e
+}

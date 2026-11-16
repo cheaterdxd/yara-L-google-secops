@@ -1,0 +1,33 @@
+# T1651 — Cloud Administration Command
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for detecting Cloud Administration Command (T1651).
+# Data Sources: EDR Platform
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Legitimate IT operations teams using Azure RunCommand for patching, configuration management, or troubleshooting via approved change tickets, Azure Automation Runbooks configured for scheduled maintenance tasks such as VM shutdowns, certificate rotation, or log collection, Cloud management platforms (Ansible Tower, HashiCorp Terraform, Azure Arc) that use RunCommand as part of infrastructure-as-code pipelines
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1651
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detection_t1651 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects Cloud Administration Command - T1651"
+    severity = "HIGH"
+    mitre_attack = "T1651"
+    reference = "https://attack.mitre.org/techniques/T1651/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.file.full_path = $process_path
+    $e.target.process.command_line = $cmdline
+    re.regex($e.target.process.file.full_path, `(?i)(powershell|cmd|wscript|cscript)\.exe$`) and
+    re.regex($e.target.process.command_line, `(?i)(-enc|-bypass|invoke-expression)`)
+    not re.regex($e.principal.process.file.full_path, `(?i)(trustedinstaller|msiexec)`)
+
+  condition:
+    $e
+}

@@ -1,0 +1,74 @@
+# T1587.002 — Code Signing Certificates
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1587.002 certificate creation and manipulation.
+# Data Sources: Google Chronicle with Windows endpoint telemetry, Chronicle Forwarder with Sysmon, Chronicle UDM-normalized process events
+# Required Sources: UDM process events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: Developer workstations with legitimate certificate signing workflows in SDLC pipelines, Security operations or PKI teams managing enterprise certificate infrastructure, Automated DevOps or CI/CD systems that build and sign software packages as part of normal release processes
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1587.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1587_002_code_signing_cert_creation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1587.002 - self-signed code signing certificate creation and manipulation via Windows SDK tools, PowerShell PKI cmdlets, OpenSSL, certutil, and signtool"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1587.002"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.command_line != ""
+
+    (
+      // Branch 1: Native SDK tools
+      re.regex($e.target.process.file.full_path, `(?i)\\(makecert|pvk2pfx)\.exe$`)
+
+      // Branch 2: PowerShell certificate cmdlets
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(New-SelfSignedCertificate|Export-PfxCertificate|Export-Certificate|X509Certificate2|CertEnroll\.CX509|CertificateRequest|codeSigning|1\.3\.6\.1\.5\.5\.7\.3\.3)`)
+      )
+
+      // Branch 3: OpenSSL code signing cert creation
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\openssl\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)\s(req|x509|pkcs12|genpkey|genrsa)\s`)
+        and re.regex($e.target.process.command_line, `(?i)(codeSigning|1\.3\.6\.1\.5\.5\.7\.3\.3|extendedKeyUsage|-x509)`)
+      )
+
+      // Branch 4: certutil certificate store manipulation
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\certutil\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(-addstore|-importpfx|-add)`)
+      )
+
+      // Branch 5: signtool signing
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\signtool\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)\ssign`)
+      )
+    )
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_path = $e.target.process.file.full_path
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+    $is_suspicious_parent = if(
+      re.regex($e.principal.process.file.full_path, `(?i)\\(cmd|wscript|mshta|cscript|regsvr32|rundll32|msiexec)\.exe$`),
+      1, 0
+    )
+    $is_temp_path = if(
+      re.regex($e.target.process.command_line, `(?i)\\(temp|appdata|downloads|public)\\`),
+      1, 0
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,66 @@
+# THREAT-InitialAccess-PhishingMacro — Phishing Document Macro Execution and Initial Access
+# Tactic: Initial Access, Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for phishing macro initial access detection.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM), Windows endpoint telemetry via Chronicle forwarder or third-party ingestion (CrowdStrike, Carbon Black, SentinelOne)
+# Required Sources: UDM PROCESS_LAUNCH events, UDM FILE_CREATION events
+# False Positives: Legitimate macro-enabled workbooks used by finance teams that invoke PowerShell or cmd.exe for automated report delivery — add an exception list in Chronicle using a reference list of approved automation user accounts bound to specific Office processes, ISO/IMG files downloaded by IT admins for OS provisioning followed by running Excel-based inventory tools — the 30-minute correlation window will catch this pattern; tune by excluding known IT admin hostnames or adding a NOT condition on the file path matching known ISO repo directories, Security tooling that uses Office document generation (e.g., SIEM report exports via Word COM) and may invoke cmd.exe for file operations — review target.process.command_line in alerts; legitimate tooling will have predictable, non-obfuscated arguments
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-InitialAccess-PhishingMacro
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule phishing_macro_office_suspicious_child_process {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects Office applications spawning LOLBins or script interpreters, indicative of macro-based phishing initial access. Covers Pikabot, DarkGate, TA577, and Lazarus Group TTPs. NCSC 2025: macro-based delivery in 40% of UK SMB ransomware intrusions."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1566.001"
+    mitre_attack_subtechnique = "T1566.001"
+    reference = "https://attack.mitre.org/techniques/T1566/001/"
+    created = "2025-04-25"
+    version = "1.0"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.process.file.full_path = /(?i)(winword|excel|powerpnt|outlook|onenote|msaccess|mspub)\.exe$/
+    $proc.target.process.file.full_path = /(?i)(cmd|powershell|pwsh|mshta|wscript|cscript|regsvr32|rundll32|certutil|bitsadmin|wmic|msiexec|curl|wget|schtasks)\.exe$/
+    $proc.principal.hostname = $hostname
+    $proc.principal.user.userid = $user
+
+  condition:
+    $proc
+}
+
+rule phishing_macro_iso_container_delivery {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects ISO/IMG/VHD container file creation followed within 30 minutes by an Office application spawning a suspicious child process, indicating MOTW-bypass phishing delivery chain."
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1566.001"
+    created = "2025-04-25"
+    version = "1.0"
+
+  events:
+    $file.metadata.event_type = "FILE_CREATION"
+    $file.target.file.full_path = /(?i)\.(iso|img|vhd|vhdx)$/
+    $file.principal.hostname = $hostname
+    $file.principal.user.userid = $user
+
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.process.file.full_path = /(?i)(winword|excel|powerpnt|outlook|onenote|msaccess|mspub)\.exe$/
+    $proc.target.process.file.full_path = /(?i)(cmd|powershell|pwsh|mshta|wscript|cscript|regsvr32|rundll32|certutil|bitsadmin|wmic|msiexec)\.exe$/
+    $proc.principal.hostname = $hostname
+    $proc.principal.user.userid = $user
+
+  match:
+    $hostname, $user over 30m
+
+  condition:
+    $file and $proc
+}

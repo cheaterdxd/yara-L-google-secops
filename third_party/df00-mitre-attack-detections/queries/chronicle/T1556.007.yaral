@@ -1,0 +1,48 @@
+# T1556.007 — Hybrid Identity
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1556.007 Hybrid Identity attacks across three correlated UDM event types: FILE_MODIFICATION events where target file paths match ADFS, Microsoft.IdentityServer, or AzureADConnectAuthenticationAgentService directories with DLL, config, or executable extensions (MagicWeb/PTASpy staging); PROCESS_LAUNCH events where AzureADConnectAuthenticationAgentService.exe appears as principal or target process with a non-standard parent (DLL injection indicator); and USER_RESOURCE_UPDATE_CONTENT Azure AD audit events matching PTA agent registration operations (rogue agent registration).
+# Data Sources: Google Chronicle SIEM (UDM), Azure AD audit logs via Chronicle ingestion, Windows Sysmon via Chronicle Forwarder, CrowdStrike or Carbon Black endpoint telemetry via Chronicle
+# Required Sources: UDM Events (FILE_MODIFICATION), UDM Events (PROCESS_LAUNCH), UDM Events (USER_RESOURCE_UPDATE_CONTENT)
+# False Positives: Authorized Azure AD Connect deployments or periodic health attestation cycles that legitimately generate USER_RESOURCE_UPDATE_CONTENT events for PTA agent registration, Planned ADFS infrastructure upgrades where Microsoft-signed DLLs and configuration files are written by admin accounts with expected file paths, triggering FILE_MODIFICATION events, Endpoint security agents or asset management tools that read and stage ADFS configuration directories for inventory or compliance scanning purposes
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule hybrid_identity_t1556_007 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1556.007 Hybrid Identity - PTA agent registration, ADFS DLL/config tampering, anomalous AzureADConnect process spawning"
+    mitre_attack_tactic = "Persistence, Defense Evasion, Credential Access"
+    mitre_attack_technique = "T1556.007"
+    severity = "HIGH"
+    confidence = "HIGH"
+    rule_version = "1.0"
+    reference = "https://attack.mitre.org/techniques/T1556/007/"
+
+  events:
+    (
+      $e.metadata.event_type = "FILE_MODIFICATION"
+      and re.regex($e.target.file.full_path, `(?i)(\\ADFS\\|Microsoft\.IdentityServer|AzureADConnectAuthenticationAgentService)`)
+      and re.regex($e.target.file.full_path, `(?i)\.(dll|config|exe)$`)
+    )
+    or
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e.target.process.file.full_path, `(?i)AzureADConnectAuthenticationAgentService\.exe`)
+        or re.regex($e.principal.process.file.full_path, `(?i)AzureADConnectAuthenticationAgentService\.exe`)
+      )
+      and not re.regex($e.principal.process.file.full_path, `(?i)(services\.exe|svchost\.exe)`)
+    )
+    or
+    (
+      $e.metadata.event_type = "USER_RESOURCE_UPDATE_CONTENT"
+      and re.regex($e.metadata.product_event_type, `(?i)(Add agent to application|Register connector|Pass-through authentication agent)`)
+    )
+
+  condition:
+    $e
+}

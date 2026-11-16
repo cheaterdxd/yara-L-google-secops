@@ -1,0 +1,45 @@
+# T1027.012 — LNK Icon Smuggling
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule correlating Explorer-spawned interpreter launches with HTTP/download arguments and subsequent outbound network connections from the same host within a 3-minute window, consistent with LNK icon smuggling payload delivery.
+# Data Sources: Chronicle SIEM, Google Workspace, Windows Event Logs via Chronicle forwarder
+# Required Sources: udm.events
+# False Positives: Legitimate web-based application launchers deployed via Active Directory shortcuts, Chrome or other browser helper LNK files that invoke PowerShell for extension management, IT ticketing or remote support tools that create shortcuts with external HTTPS references
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.012
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule lnk_icon_smuggling_download {
+  meta:
+    author = "argus-v1"
+    description = "Detects LNK file abuse where shortcut metadata triggers download of remote payloads via scripting interpreters"
+    severity = "HIGH"
+    tactic = "TA0005"
+    technique = "T1027.012"
+    false_positives = "Corporate deployment shortcuts, legitimate update launchers"
+    version = "1.0"
+
+  events:
+    $launch.metadata.event_type = "PROCESS_LAUNCH"
+    $launch.principal.process.file.full_path = /(?i)explorer\.exe$/
+    $launch.target.process.file.full_path = /(?i)(powershell|cmd|wscript|cscript|mshta|certutil|bitsadmin|rundll32)\.exe$/
+    (
+      $launch.target.process.command_line = /(?i)(http[s]?:\/\/|ftp:\/\/)/
+      or $launch.target.process.command_line = /(?i)(downloadstring|downloadfile|webclient|invoke-expression|iex\s*\()/
+      or $launch.target.process.command_line = /(?i)\.lnk/
+    )
+    $launch.principal.hostname = $hostname
+
+    $net.metadata.event_type = "NETWORK_CONNECTION"
+    $net.principal.hostname = $hostname
+    $net.target.process.file.full_path = /(?i)(powershell|cmd|wscript|cscript|mshta)\.exe$/
+    not $net.target.ip = /^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/
+
+  match:
+    $hostname over 3m
+
+  condition:
+    $launch and $net
+}

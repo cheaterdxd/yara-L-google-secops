@@ -1,0 +1,48 @@
+# T1003.002 — Security Account Manager
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting SAM credential dumping by matching process launch events against known attack patterns including registry hive export via reg.exe, Mimikatz lsadump/sekurlsa commands, VSS shadow copy enumeration, and ESENTUTL/NTDSUTIL misuse against SAM/NTDS targets.
+# Data Sources: Chronicle UDM (Windows Endpoint), Google Chronicle Sysmon Forwarder, Chronicle SIEM Windows Event Log Ingestion
+# Required Sources: UDM Process Events
+# False Positives: System administrators performing authorized registry backup exports using reg.exe save commands as part of documented change management procedures, Legitimate forensic investigation tools or EDR solutions accessing VSS shadows for telemetry collection during incident response, Authorized penetration tests or red team exercises using Mimikatz or secretsdump as part of a scoped engagement
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1003.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1003_002_sam_credential_dumping {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects SAM database credential dumping via registry export, Mimikatz, VSS shadow copy, or ESENTUTL/NTDSUTIL abuse"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1003.002"
+    severity = "CRITICAL"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path != ""
+    (
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)reg\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)save.*hklm\\sam`) or
+          re.regex($e.target.process.command_line, `(?i)save.*hklm\\system`) or
+          re.regex($e.target.process.command_line, `(?i)save.*hklm\\security`)
+        )
+      ) or
+      re.regex($e.target.process.command_line, `(?i)(lsadump::sam|lsadump::cache|sekurlsa::msv)`) or
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)vssadmin\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(create shadow|list shadow)`)
+      ) or
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(esentutl|ntdsutil)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(sam|ntds|shadow)`)
+      )
+    )
+
+  condition:
+    $e
+}

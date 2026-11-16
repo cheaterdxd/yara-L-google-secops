@@ -1,0 +1,76 @@
+# T1213.003 — Code Repositories
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1213.003 code repository collection.
+# Data Sources: Google Chronicle UDM - PROCESS_LAUNCH events, Endpoint telemetry forwarded to Chronicle (CrowdStrike, Carbon Black, SentinelOne, Windows Event logs via Chronicle forwarder)
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Authorized security assessments where red team or security engineering runs gitleaks/trufflehog against internal repositories as part of approved engagements., Developer machines with pre-commit hooks that invoke secret-scanning tools automatically on every git commit action., CI/CD build agents (GitHub Actions self-hosted runners, Jenkins workers) that legitimately clone multiple repositories and interact with repository APIs., DevOps engineers using scripted tools to manage repository settings, create repositories, or configure webhooks via GitHub/GitLab REST APIs.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1213.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1213_003_code_repository_collection {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1213.003 - Code Repository collection via secret scanning tools, repository API enumeration, and git bulk extraction operations."
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1213.003"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1213/003/"
+    created = "2026-04-19"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+
+    (
+      // Secret scanning tools by process name
+      re.regex($e.principal.process.file.full_path, `(?i)(trufflehog|gitleaks|git-secrets|gitrob|shhgit|detect-secrets|git-hound|gitallsecrets)$`)
+
+      // Secret scanning tools in command line arguments
+      or re.regex($e.principal.process.command_line, `(?i)(trufflehog|gitleaks|git.secrets|gitrob|shhgit|detect.secrets|git.hound|gitallsecrets)`)
+
+      // Git bulk archive or bundle operations
+      or (
+        re.regex($e.principal.process.file.full_path, `(?i)(^|[/\\])git(\.exe)?$`)
+        and re.regex($e.principal.process.command_line, `(?i)\b(archive|bundle)\b`)
+      )
+
+      // Repository API enumeration via scripting tools
+      or (
+        re.regex($e.principal.process.file.full_path, `(?i)(python3?(\.exe)?|powershell(\.exe)?|pwsh(\.exe)?|curl(\.exe)?|wget(\.exe)?)$`)
+        and re.regex($e.principal.process.command_line, `api\.github\.com/(orgs|users|repos|search)|gitlab\.com/api/v4/(projects|groups)|api\.bitbucket\.org/2\.0/repositories|dev\.azure\.com`)
+      )
+
+      // Git clone operations (threshold for bulk detected at SIEM level via noisy_keyword or aggregation rule)
+      or (
+        re.regex($e.principal.process.file.full_path, `(?i)(^|[/\\])git(\.exe)?$`)
+        and re.regex($e.principal.process.command_line, `(?i)\bclone\b`)
+      )
+    )
+
+  match:
+    $e.principal.hostname over 1h
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $process_path = $e.principal.process.file.full_path
+    $command_line = $e.principal.process.command_line
+    $risk_score = max(
+      if(re.regex($e.principal.process.command_line, `(?i)(trufflehog|gitleaks|git.secrets|gitrob|shhgit|detect.secrets|git.hound|gitallsecrets)`), 90, 0),
+      if(re.regex($e.principal.process.command_line, `api\.github\.com|gitlab\.com/api|api\.bitbucket\.org|dev\.azure\.com`), 75, 0),
+      if(re.regex($e.principal.process.command_line, `(?i)\b(archive|bundle)\b`) and re.regex($e.principal.process.file.full_path, `(?i)(^|[/\\])git(\.exe)?$`), 80, 0),
+      if(re.regex($e.principal.process.command_line, `(?i)\bclone\b`) and re.regex($e.principal.process.file.full_path, `(?i)(^|[/\\])git(\.exe)?$`), 50, 0)
+    )
+    $detection_type = if(
+      re.regex($e.principal.process.command_line, `(?i)(trufflehog|gitleaks|git.secrets|gitrob|shhgit|detect.secrets|git.hound|gitallsecrets)`), "SecretScanningToolExecution",
+      if(re.regex($e.principal.process.command_line, `api\.github\.com|gitlab\.com/api|api\.bitbucket\.org|dev\.azure\.com`), "RepositoryAPIEnumeration",
+      if(re.regex($e.principal.process.command_line, `(?i)\b(archive|bundle)\b`), "GitBulkExtraction", "BulkRepositoryCloning"))
+    )
+
+  condition:
+    $e
+}

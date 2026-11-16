@@ -1,0 +1,35 @@
+# T1547.001 — Registry Run Keys / Startup Folder
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule matching UDM REGISTRY_MODIFICATION events targeting Windows autorun registry key paths.
+# Data Sources: Windows endpoint telemetry forwarded to Chronicle via Bindplane or Chronicle forwarder, Microsoft Defender for Endpoint via Chronicle integration, Sysmon via Chronicle Windows sensor
+# Required Sources: UDM events with metadata.event_type = REGISTRY_MODIFICATION
+# False Positives: Enterprise patch management or software distribution agents writing temporary staging script paths into run keys as part of pre-boot or logon-triggered update sequences, Anti-malware products (Windows Defender, third-party AV) recording temporary script-based remediation tools in run keys during active incident response or cleanup passes, Legitimate automation frameworks such as Puppet or Chef writing PowerShell bootstrap scripts into run keys for post-provisioning configuration on new endpoints
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1547.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1547_001_registry_run_key_persistence {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects persistence established via Registry Run Keys or Startup Folder (T1547.001). Alerts on writes to common autorun registry paths from non-trusted processes where the value data references suspicious file locations or script extensions."
+    mitre_attack_technique = "T1547.001"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-20"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    $e.target.registry.registry_key = /(?i)(CurrentVersion\\Run|CurrentVersion\\RunOnce|CurrentVersion\\RunOnceEx|CurrentVersion\\RunServices|Policies\\Explorer\\Run|Windows NT\\CurrentVersion\\Windows|Control\\Session Manager\\BootExecute)/
+    not $e.principal.process.file.full_path = /(?i)(\\msiexec\.exe$|\\TrustedInstaller\.exe$|\\TiWorker\.exe$|\\ccmexec\.exe$|\\MpSigStub\.exe$)/
+    (
+      $e.target.registry.registry_value_data = /(?i)(\\Temp\\|\\AppData\\Local\\Temp|\\Downloads\\|\\Public\\|Recycle\.Bin|\\ProgramData\\)/ or
+      $e.target.registry.registry_value_data = /(?i)\.(vbs|js|bat|cmd|ps1|hta|wsh|wsf)("| |$)/
+    )
+
+  condition:
+    $e
+}

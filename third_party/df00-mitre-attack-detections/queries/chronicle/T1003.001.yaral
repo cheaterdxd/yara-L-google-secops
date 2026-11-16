@@ -1,0 +1,57 @@
+# T1003.001 — LSASS Memory
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting LSASS credential dumping (T1003.001) across three attack patterns: direct process memory access with high-privilege access masks (Mimikatz, Cobalt Strike), comsvcs.dll MiniDump via rundll32, and ProcDump/ProcDump64 targeting lsass.
+# Data Sources: Google Chronicle UDM, Sysmon via Chronicle forwarder, Windows Security Events via Chronicle
+# Required Sources: UDM Events (PROCESS_OPEN, PROCESS_LAUNCH)
+# False Positives: Security health monitoring services (SecurityHealthService.exe, SenseIR.exe) not covered by the exclusion list that perform legitimate LSASS reads on newer Windows builds — review UDM principal fields for process lineage, Legitimate Windows debugging tools (e.g., WinDbg, cdb.exe) used by kernel developers on developer workstations — restrict alert scope to server and non-developer endpoints, Automated memory acquisition during IR investigations using Volatility or similar forensic tools run by the SOC — maintain a list of authorized IR hosts and suppress accordingly
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1003.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule lsass_credential_dumping_t1003_001 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects LSASS memory credential dumping via direct process access, comsvcs MiniDump, or ProcDump — T1003.001"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1003.001"
+    reference = "https://attack.mitre.org/techniques/T1003/001/"
+    created = "2026-04-13"
+
+  events:
+    /* Pattern A: Direct LSASS process access with suspicious access mask */
+    (
+      $e1.metadata.event_type = "PROCESS_OPEN"
+      and $e1.target.process.file.full_path = /(?i).*\\lsass\.exe$/
+      and not $e1.principal.process.file.full_path = /(?i).*\\(MsMpEng|csrss|services|lsm|svchost|winlogon|wininit|wininit|SecurityHealthService|SenseIR)\.exe$/
+      and (
+        $e1.target.resource.attribute.labels["GrantedAccess"] = "0x1fffff" or
+        $e1.target.resource.attribute.labels["GrantedAccess"] = "0x1f3fff" or
+        $e1.target.resource.attribute.labels["GrantedAccess"] = "0x143a"  or
+        $e1.target.resource.attribute.labels["GrantedAccess"] = "0x1410"  or
+        $e1.target.resource.attribute.labels["GrantedAccess"] = "0x1010"  or
+        $e1.target.resource.attribute.labels["GrantedAccess"] = "0x40"
+      )
+    )
+    or
+    /* Pattern B: rundll32 invoking comsvcs.dll MiniDump */
+    (
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and $e1.target.process.file.full_path = /(?i).*\\rundll32\.exe$/
+      and $e1.target.process.command_line = /(?i).*comsvcs.*MiniDump.*/
+    )
+    or
+    /* Pattern C: ProcDump targeting lsass */
+    (
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and $e1.target.process.file.full_path = /(?i).*\\procdump(64)?\.exe$/
+      and $e1.target.process.command_line = /(?i).*lsass.*/
+    )
+
+  condition:
+    $e1
+}

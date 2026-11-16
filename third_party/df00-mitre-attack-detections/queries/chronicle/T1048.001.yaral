@@ -1,0 +1,58 @@
+# T1048.001 — Exfiltration Over Symmetric Encrypted Non-C2 Protocol
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle that correlates PROCESS_LAUNCH events (encryption utility invoked with cipher arguments) to NETWORK_CONNECTION events from the same host within a 300-second window.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Endpoint telemetry forwarded to Chronicle (EDR, Sysmon, auditd), Network detection telemetry (NDR, firewall, proxy logs normalized to UDM)
+# Required Sources: UDM Events (PROCESS_LAUNCH, NETWORK_CONNECTION)
+# False Positives: System administrators running openssl enc for file encryption before upload to external cloud storage, generating both a process event and a subsequent network event, Scheduled tasks or cron jobs invoking ccrypt or gpg for automated encrypted backup followed by rsync/scp to off-site servers, Python automation scripts using AES encryption for API payload signing before posting to external REST endpoints, Penetration testing workstations running authorized red team tooling that includes openssl or cryptcat for C2 simulation exercises
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1048.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1048_001_symmetric_encrypted_exfil {
+  meta:
+    author          = "Detection Engineering"
+    description     = "Detects T1048.001: symmetric encryption tool (openssl, ccrypt, cryptcat, gpg, aescrypt, Python crypto) launched with AES/RC4/ChaCha20 cipher arguments, followed within 5 minutes by an outbound connection from the same host to a public IP. Key-material indicators (-k, -pass pass:, -nosalt) increase fidelity."
+    mitre_attack_tactic    = "Exfiltration"
+    mitre_attack_technique = "T1048.001"
+    severity        = "HIGH"
+    confidence      = "MEDIUM"
+    version         = "1.0"
+    created         = "2026-04-16"
+
+  events:
+    /* Event 1: Encryption tool process launch with cipher arguments */
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.hostname  = $hostname
+    (
+      re.regex($proc.target.process.file.full_path,
+        `(?i)(openssl|ccrypt|mcrypt|cryptcat|aescrypt|gpg)`) or
+      (
+        re.regex($proc.target.process.file.full_path, `(?i)python`) and
+        re.regex($proc.target.process.command_line,
+          `(?i)(aes|rc4|des|chacha|blowfish|cipher|encrypt|pycrypto|cryptography)`)
+      )
+    )
+    re.regex($proc.target.process.command_line,
+      `(?i)(enc[\s]+-aes|enc[\s]+-rc4|enc[\s]+-des|-aes-256|-aes-128|aes256|aes128|-rc4|arcfour|chacha20|-nosalt|-pass[\s]+pass:|-k[\s]+\S+|-passout|-passin)`)
+
+    /* Event 2: Outbound network connection from same host to public IP */
+    $net.metadata.event_type  = "NETWORK_CONNECTION"
+    $net.principal.hostname   = $hostname
+    $net.network.direction    = "OUTBOUND"
+    not net.ip_in_range_cidr($net.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($net.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($net.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($net.target.ip, "127.0.0.0/8")
+    not net.ip_in_range_cidr($net.target.ip, "169.254.0.0/16")
+    not net.ip_in_range_cidr($net.target.ip, "::1/128")
+
+    /* Sequence: process before network, within 5-minute window */
+    $proc.metadata.event_timestamp.seconds <= $net.metadata.event_timestamp.seconds
+    ($net.metadata.event_timestamp.seconds - $proc.metadata.event_timestamp.seconds) <= 300
+
+  condition:
+    $proc and $net
+}

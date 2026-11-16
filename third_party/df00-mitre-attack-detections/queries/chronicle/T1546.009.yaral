@@ -1,0 +1,41 @@
+# T1546.009 — AppCert DLLs
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting AppCert DLL persistence (T1546.009) by monitoring UDM REGISTRY_MODIFICATION events targeting the Session Manager AppCertDlls key where the registered DLL path is outside system directories, and PROCESS_MODULE_LOAD events where a DLL with 'appcert' in its path is loaded from a non-system location.
+# Data Sources: Windows telemetry ingested into Chronicle UDM (Sysmon, Microsoft Defender for Endpoint, Crowdstrike Falcon), Chronicle SIEM with Windows endpoint data mapped to UDM
+# Required Sources: UDM events with event_type REGISTRY_MODIFICATION, UDM events with event_type PROCESS_MODULE_LOAD
+# False Positives: Security monitoring solutions from vendors who register inspection DLLs outside system32 in AppCertDlls for kernel-level process monitoring capabilities, Microsoft Application Compatibility Toolkit (ACT) or third-party app-compat shim tooling that writes non-system DLL paths to AppCertDlls as part of shim database deployment, Enterprise DLP or insider-threat monitoring agents installed in custom directories that hook process creation via AppCertDlls to inspect all spawned processes
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule appcert_dll_persistence_t1546_009 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects AppCert DLL persistence and privilege escalation via registry modification of AppCertDlls key with non-system DLL paths, or suspicious DLL module loads from non-standard directories triggered by the AppCert mechanism"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1546.009"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1546/009/"
+
+  events:
+    (
+      $e.metadata.event_type = "REGISTRY_MODIFICATION" and
+      re.regex($e.target.registry.registry_key,
+        `(?i)\\System\\CurrentControlSet\\Control\\Session Manager\\AppCertDlls`) and
+      not re.regex($e.target.registry.registry_value_data,
+        `(?i)^C:\\Windows\\(system32|SysWOW64|WinSxS)\\`)
+    ) or
+    (
+      $e.metadata.event_type = "PROCESS_MODULE_LOAD" and
+      re.regex($e.target.file.full_path, `(?i)appcert`) and
+      not re.regex($e.target.file.full_path,
+        `(?i)C:\\Windows\\(system32|SysWOW64|WinSxS)\\`)
+    )
+
+  condition:
+    $e
+}

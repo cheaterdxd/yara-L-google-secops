@@ -1,0 +1,49 @@
+# T1480 — Execution Guardrails
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule for T1480 Execution Guardrails triggering on PROCESS_LAUNCH UDM events where the principal (parent) process path matches a LOLBin or script interpreter and the target (spawned) process command line contains environmental fingerprinting patterns.
+# Data Sources: Chronicle UDM — Windows Endpoint Events (PROCESS_LAUNCH), Google Security Operations SIEM with Mandiant Endpoint or Carbon Black/CrowdStrike ingestion, Chronicle Ingestion API with Sysmon XML parser (process create events)
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Enterprise software deployment pipelines (Chocolatey, Winget, Scoop) where PowerShell is the parent and child scripts perform pre-flight checks including Test-Path or Win32_ComputerSystem queries to verify installation prerequisites before committing package installation, RMM agents (ConnectWise Automate, N-able, Kaseya) that routinely execute script-host-spawned diagnostics checking domain trust relationships via nltest or enumerating network adapters via WMI for managed device inventory, Anti-virus or EDR deployment scripts executed under msiexec that explicitly check for the presence of competing security products — including ESET binaries ekrn.exe and egui.exe — to prevent compatibility conflicts during installation or upgrade
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1480
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1480_execution_guardrails_env_fingerprinting {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects processes spawned by LOLBins or script hosts performing environmental fingerprinting consistent with T1480 Execution Guardrails — volume serial checks, domain/hostname enumeration, network adapter queries, file/process presence validation"
+    severity = "HIGH"
+    tactic = "Defense Evasion"
+    technique = "T1480"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1480/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path != ""
+    $e.target.process.command_line != ""
+
+    // Parent must be a LOLBin or script interpreter
+    re.regex($e.principal.process.file.full_path,
+      `(?i)(wscript|cscript|mshta|rundll32|regsvr32|msiexec|installutil|cmstp|powershell|pwsh)\.exe$`)
+
+    // Child command line must contain at least one guardrail fingerprinting pattern
+    (
+      re.regex($e.target.process.command_line,
+        `(?i)(volumeserialnumber|win32_logicaldisk|vol\s+[c-z]:|fsutil\s+volume)`) or
+      re.regex($e.target.process.command_line,
+        `(?i)(win32_computersystem|dnsdomain|userdnsdomain|logonserver|nltest.*(domain_trusts|dclist))`) or
+      re.regex($e.target.process.command_line,
+        `(?i)(win32_networkadapterconfiguration|macaddress|defaultipgateway|win32_networkadapter)`) or
+      re.regex($e.target.process.command_line,
+        `(?i)(if\s+(not\s+)?exist|test-path|haldrund\.pid|irc\.pid)`) or
+      re.regex($e.target.process.command_line,
+        `(?i)(ekrn\.exe|egui\.exe|tasklist\s+/fi|get-process\s+-name)`)
+    )
+
+  condition:
+    $e
+}

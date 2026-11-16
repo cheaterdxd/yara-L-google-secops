@@ -1,0 +1,45 @@
+# T1486 — Data Encrypted for Impact
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1486 Data Encrypted for Impact by correlating shadow copy deletion or Windows recovery sabotage process events with ransomware-extension file creation events on the same host within a 1-hour sliding window.
+# Data Sources: Google Chronicle UDM ingestion, Windows Event Log via Chronicle Forwarder, Microsoft Sysmon via Chronicle Forwarder, CrowdStrike Falcon via Chronicle integration
+# Required Sources: UDM PROCESS_LAUNCH events, UDM FILE_CREATION events
+# False Positives: Enterprise disk encryption deployment (BitLocker provisioning via bcdedit, VeraCrypt volume creation) that modifies boot recovery settings and creates encrypted volume container files with .enc or similar extensions on the same host within the detection window, Backup infrastructure maintenance tasks where backup admins run VSS snapshot deletion commands during scheduled maintenance windows while legitimate .crypt files exist from prior encryption operations on the same endpoint, Authorized red team or penetration testing exercises simulating ransomware behavior on in-scope hosts that are not excluded from Chronicle detection rules, generating correlated process and file events
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1486
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1486_data_encrypted_for_impact {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1486 Data Encrypted for Impact: correlates shadow copy deletion or recovery sabotage process events with ransomware extension file creation on the same host within 1 hour. Requires at least 10 encrypted files alongside a shadow deletion event to reduce false positives from isolated admin activity."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1486"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1486/"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.hostname = $host
+    (
+      re.regex($proc.target.process.command_line, `(?i)vssadmin\s+delete\s+shadows`) or
+      re.regex($proc.target.process.command_line, `(?i)wmic\s+shadowcopy\s+delete`) or
+      re.regex($proc.target.process.command_line, `(?i)bcdedit\s+/set.*recoveryenabled\s+no`) or
+      re.regex($proc.target.process.command_line, `(?i)bcdedit\s+/set.*bootstatuspolicy.*ignoreallfailures`) or
+      re.regex($proc.target.process.command_line, `(?i)wbadmin\s+delete\s+catalog`) or
+      re.regex($proc.target.process.command_line, `(?i)wbadmin\s+delete\s+systemstatebackup`)
+    )
+
+    $file.metadata.event_type = "FILE_CREATION"
+    $file.principal.hostname = $host
+    re.regex($file.target.file.full_path, `(?i)\.(encrypted|locked|crypt|enc|ransom|cry|lock64|cuba|avos|avos2|play|blackbyte)$`)
+
+  match:
+    $host over 1h
+
+  condition:
+    $proc and #file > 10
+}

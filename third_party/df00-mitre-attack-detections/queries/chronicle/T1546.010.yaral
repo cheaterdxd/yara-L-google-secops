@@ -1,0 +1,53 @@
+# T1546.010 — AppInit DLLs
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting T1546.010 AppInit DLL persistence via UDM registry modification events.
+# Data Sources: Windows Event Log (Sysmon Registry Events), Google Chronicle UDM Registry Events
+# Required Sources: UDM Events (REGISTRY_MODIFICATION)
+# False Positives: Administrative tooling or GPO configurations that legitimately manage AppInit_DLLs values across a fleet, generating expected modification events from SYSTEM or trusted admin accounts, Application compatibility fixes or shims installed by Windows Assessment and Deployment Kit (ADK) tools that set AppInit_DLLs values for legacy software support, Security monitoring products (e.g., older versions of some EDR agents) that register themselves in AppInit_DLLs for process-level visibility
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.010
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule appinit_dll_persistence_t1546_010 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects AppInit DLL persistence mechanism via registry modification (T1546.010). Covers suspicious DLL path injection, enabling of AppInit loading, and disabling of signature enforcement."
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1546.010"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platform = "Windows"
+    reference = "https://attack.mitre.org/techniques/T1546/010/"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($e.target.registry.registry_key,
+        `(?i)SOFTWARE\\(Wow6432Node\\)?Microsoft\\Windows NT\\CurrentVersion\\Windows$`) or
+      re.regex($e.target.registry.registry_key,
+        `(?i)HKEY_LOCAL_MACHINE\\SOFTWARE\\(Wow6432Node\\)?Microsoft\\Windows NT\\CurrentVersion\\Windows$`)
+    )
+    re.regex($e.target.registry.registry_value_name,
+      `(?i)^(AppInit_DLLs|LoadAppInit_DLLs|RequireSignedAppInit_DLLs)$`)
+    (
+      (
+        re.regex($e.target.registry.registry_value_name, `(?i)^AppInit_DLLs$`) and
+        $e.target.registry.registry_value_data != "" and
+        not re.regex($e.target.registry.registry_value_data, `(?i)(system32|syswow64)`)
+      ) or
+      (
+        re.regex($e.target.registry.registry_value_name, `(?i)^LoadAppInit_DLLs$`) and
+        $e.target.registry.registry_value_data = "1"
+      ) or
+      (
+        re.regex($e.target.registry.registry_value_name, `(?i)^RequireSignedAppInit_DLLs$`) and
+        $e.target.registry.registry_value_data = "0"
+      )
+    )
+
+  condition:
+    $e
+}

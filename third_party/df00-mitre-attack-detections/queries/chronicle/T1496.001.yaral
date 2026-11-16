@@ -1,0 +1,46 @@
+# T1496.001 — Compute Hijacking
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1496.001 Compute Hijacking via two branches: (1) process launch events matching known cryptocurrency miner binary names or mining-specific command-line arguments using UDM fields, and (2) network connection events to common stratum mining pool ports excluding RFC1918 and loopback ranges.
+# Data Sources: Google Chronicle UDM, Chronicle Forwarder (Windows endpoints), Chronicle Forwarder (Linux endpoints), Google Cloud Chronicle with Sysmon ingestion
+# Required Sources: UDM PROCESS_LAUNCH events, UDM NETWORK_CONNECTION events
+# False Positives: Authorized cryptocurrency treasury or finance tooling connecting to exchange APIs on common ports, Blockchain node software that communicates over stratum-adjacent ports for P2P consensus, Developer environments running local mining pool simulators for testing DeFi applications
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1496.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1496_001_compute_hijacking_cryptomining {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects cryptocurrency mining (T1496.001) via known miner process names, mining CLI arguments, or outbound connections to mining pool ports."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1496.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    version = "1.0"
+
+  events:
+    (
+      // Branch 1: Known miner process name
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(xmrig|xmrig-notls|xmrig-cuda|xmrig-amd|minerd|cpuminer|cpuminer-opt|ethminer|nbminer|t-rex|phoenixminer|nanominer|xmr-stak|xmrstak|rhminer|kdevtmpfsi|kinsing|sysupdate|networkservice|sysguard|kerberods)(\.exe)?$`) or
+        re.regex($e.target.process.command_line, `(?i)(stratum\+tcp://|stratum\+ssl://|stratum2\+tcp://|--donate-level|--mining-threads|--coin\s+(monero|xmr)|pool\.minexmr|pool\.hashvault|supportxmr\.com|nanopool\.org|monerohash\.com|cryptonight|randomx|--max-cpu-usage|-o\s+stratum)`)
+      )
+    ) or
+    (
+      // Branch 2: Mining pool port connection
+      $e.metadata.event_type = "NETWORK_CONNECTION" and
+      $e.target.port in (3333, 4444, 5555, 7777, 14444, 45700, 3032, 8008, 9999, 14433, 45560) and
+      not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8") and
+      not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12") and
+      not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16") and
+      not net.ip_in_range_cidr($e.target.ip, "127.0.0.0/8")
+    )
+
+  condition:
+    $e
+}

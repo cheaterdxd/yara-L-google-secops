@@ -1,0 +1,29 @@
+# T1608.001 — Upload Malware
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1608.001 detection using UDM event types and field matching.
+# Data Sources: Endpoint Telemetry, Web Proxy, Google Workspace
+# Required Sources: NETWORK_HTTP, PROCESS_LAUNCH, FILE_CREATION
+# False Positives: Software developers and researchers legitimately accessing IPFS gateways to retrieve decentralized content or test IPFS-hosted applications, IT administrators using certutil.exe or bitsadmin.exe for legitimate software distribution, update delivery, or certificate operations, Users downloading legitimate installers from file-sharing platforms (Discord attachments shared in dev communities, transfer.sh for ops file sharing), CI/CD pipeline agents using curl or wget to fetch build artifacts or bootstrap scripts from GitHub raw content URLs, Browser-initiated downloads of legitimate software from sites that share infrastructure with abused platforms
+# Confidence: low  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1608.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_stage_capabilities {
+  meta:
+    author = "Argus"
+    description = "Detects staging of capabilities from external infrastructure"
+    severity = "HIGH"
+    technique = "T1608"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    (
+      re.regex($e.target.url, `\.(exe|dll|bin|ps1|bat|vbs|hta|sh|elf)($|\?)`) nocase or
+      re.regex($e.target.hostname, `transfer\.sh|paste\.ee|gofile\.io|anonfiles|temp\.sh`) nocase
+    )
+    $e.principal.process.file.full_path != ""
+  condition:
+    $e
+}

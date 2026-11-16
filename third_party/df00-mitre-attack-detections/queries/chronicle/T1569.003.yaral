@@ -1,0 +1,107 @@
+# T1569.003 — Systemctl
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules for T1569.003 systemctl abuse detection.
+# Data Sources: Google Chronicle, Google Chronicle Unified Data Model (UDM), Linux Endpoint telemetry via Chronicle forwarder, auditd or EDR agent feeding Chronicle
+# Required Sources: UDM events: PROCESS_LAUNCH, FILE_CREATION
+# False Positives: CI/CD pipeline runners (GitHub Actions, GitLab CI, Jenkins) that execute as www-data or application service accounts and call systemctl as part of automated deployment scripts — add runner hostname patterns to exclusion lists in rule meta conditions, Container-based workloads using systemd inside containers (systemd-nspawn, podman with --systemd=true) where web-facing processes legitimately manage container-internal services via systemctl, Third-party software installation scripts (e.g., Elastic Agent, Datadog Agent, CrowdStrike Falcon installer) that run from temporary download paths and create .service files — correlate with known installer hashes to suppress
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1569.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1569_003_systemctl_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1569.003 - malicious systemctl abuse for persistence or code execution. Covers web process spawning systemctl, suspicious service unit file creation, and unprivileged service enablement."
+    mitre_attack_tactic = "Execution, Persistence"
+    mitre_attack_technique = "T1569.003"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-21"
+    platform = "Linux"
+
+  events:
+    // Branch 1: Web/app server spawning systemctl
+    $e1.metadata.event_type = "PROCESS_LAUNCH"
+    $e1.target.process.file.full_path = /\/bin\/systemctl|\/usr\/bin\/systemctl$|^systemctl$/
+    (
+      $e1.target.process.command_line = /\bstart\b/ or
+      $e1.target.process.command_line = /\benable\b/ or
+      $e1.target.process.command_line = /daemon-reload/ or
+      $e1.target.process.command_line = /\blink\b/
+    )
+    (
+      $e1.principal.process.file.full_path = /apache2|nginx|httpd|php-fpm|php|node|nodejs|java|python3?|ruby|perl|gunicorn|uwsgi|lighttpd|caddy|haproxy/ or
+      $e1.principal.process.parent_process.file.full_path = /apache2|nginx|httpd|php-fpm|php|node|nodejs|java|python3?|ruby|perl|gunicorn|uwsgi/
+    )
+    $e1.principal.hostname = $hostname
+    $detection_branch1 = "WebApp_Process_Spawned_Systemctl"
+
+  match:
+    $hostname over 5m
+
+  condition:
+    $e1
+}
+
+rule t1569_003_service_unit_file_drop {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious .service unit files written to systemd directories by non-package-manager or web-process parents — a key indicator of TeamTNT-style cryptomining or reverse shell persistence."
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1569.003"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+    created = "2026-04-21"
+    platform = "Linux"
+
+  events:
+    $e2.metadata.event_type = "FILE_CREATION"
+    $e2.target.file.full_path = /^\/etc\/systemd\/system\/.*\.service$|^\/lib\/systemd\/system\/.*\.service$|^\/usr\/lib\/systemd\/system\/.*\.service$|^\/run\/systemd\/system\/.*\.service$/
+    not $e2.principal.process.file.full_path = /dpkg|apt-get|apt|rpm|yum|dnf|snap|packagekitd|zypper|pacman|pip3?|conda|flatpak/
+    (
+      $e2.principal.process.file.full_path = /apache2|nginx|httpd|php|node|java|python3?|ruby|perl|curl|wget|bash|sh$/ or
+      $e2.principal.process.command_line = /\/tmp\/|\/dev\/shm\/|\/var\/tmp\/|wget |curl | nc |bash -i|sh -i|python -c|perl -e|base64 -d|xmrig|minerd|cpuminer|mkfifo|\/dev\/tcp\//
+    )
+    $e2.principal.hostname = $hostname2
+
+  match:
+    $hostname2 over 1m
+
+  condition:
+    $e2
+}
+
+rule t1569_003_unprivileged_service_enable {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects non-root, non-system accounts invoking systemctl enable, link, or daemon-reload outside of package manager or interactive login session context — indicates privilege escalation attempt or persistence by low-privilege compromised account."
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1569.003"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-21"
+    platform = "Linux"
+
+  events:
+    $e3.metadata.event_type = "PROCESS_LAUNCH"
+    $e3.target.process.file.full_path = /\/bin\/systemctl|\/usr\/bin\/systemctl$|^systemctl$/
+    (
+      $e3.target.process.command_line = /\benable\b/ or
+      $e3.target.process.command_line = /\blink\b/ or
+      $e3.target.process.command_line = /daemon-reload/
+    )
+    not $e3.principal.user.userid = "root"
+    not $e3.principal.user.userid = /^_|^systemd|^daemon/
+    not $e3.principal.process.file.full_path = /dpkg|apt|rpm|yum|dnf|snap|zypper|pacman|pip3?|conda|flatpak/
+    not $e3.principal.process.parent_process.file.full_path = /\/usr\/sbin\/sshd|^\/bin\/login$|^\/bin\/su$|^\/usr\/bin\/sudo$|tmux|screen/
+    $e3.principal.hostname = $hostname3
+
+  match:
+    $hostname3 over 10m
+
+  condition:
+    $e3
+}

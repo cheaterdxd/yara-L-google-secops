@@ -1,0 +1,50 @@
+# T1499.001 — OS Exhaustion Flood
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting OS Exhaustion Flood (T1499.001) by correlating Linux kernel syslog indicators of SYN cookie activation, conntrack table overflow, and orphaned socket exhaustion with network device telemetry from firewalls and IDS/IPS platforms.
+# Data Sources: Linux OS syslog (kern facility) via Chronicle ingestion, Cisco ASA via Chronicle ingestion, Palo Alto Networks Cortex Data Lake, Fortinet FortiGate via Chronicle, Juniper SRX via Chronicle, Generic network IDS/IPS UDM events
+# Required Sources: UDM Events (GENERIC_EVENT), UDM Events (NETWORK_CONNECTION)
+# False Positives: Internal stress testing or chaos engineering exercises against production infrastructure may trigger Linux kernel SYN cookie messages without an external attacker, Firewalls with aggressive DoS profile thresholds configured below traffic baselines will fire on legitimate bursty traffic from CDN edge nodes or API clients, Virtual machines with auto-scaling misconfigurations receiving initial traffic bursts before conntrack limits are adjusted may briefly exhaust the connection tracking table
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1499.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule os_exhaustion_flood_t1499_001 {
+  meta:
+    author = "df00tech"
+    description = "Detects OS Exhaustion Flood attacks (T1499.001) — SYN floods, ACK floods, TCP state exhaustion via Linux kernel syslog and network device alerts"
+    severity = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1499/001/"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1499.001"
+    false_positives = "Load testing, penetration testing, misconfigured conntrack limits on VMs"
+
+  events:
+    // Match Linux kernel syslog SYN flood or conntrack exhaustion indicators
+    $kernel_event.metadata.event_type = "GENERIC_EVENT"
+    $kernel_event.metadata.product_name = "Linux"
+    $kernel_event.principal.hostname = $target_host
+    (
+      re.regex($kernel_event.metadata.description, `(?i)(possible syn flooding|tcp: request_sock_tcp|sending cookies|tcp: drop open request|nf_conntrack.*table full|ip_conntrack.*table full|possible syn attack|tcp.*orphaned)`)
+      or re.regex($kernel_event.target.labels["syslog_message"], `(?i)(possible syn flooding|tcp: request_sock_tcp|sending cookies|nf_conntrack.*table full|ip_conntrack.*table full|orphaned sockets)`)
+    )
+
+    // Match network device flood alerts (firewall/IDS)
+    $nw_event.metadata.event_type = "NETWORK_CONNECTION"
+    $nw_event.target.hostname = $target_host
+    (
+      re.regex($nw_event.metadata.description, `(?i)(syn.flood|ack.flood|tcp.flood|syn.attack|synflood|half.open|tcp.*exhaust|connection.*table.*full|dos.*tcp|ddos.*tcp)`)
+      or $nw_event.security_result.category_details = /(?i)(syn.flood|ack.flood|tcp.*flood|tcp.*exhaust)/
+      or $nw_event.security_result.threat_name = /(?i)(syn.?flood|ack.?flood|tcp.?exhaust)/
+    )
+
+  match:
+    $target_host over 1h
+
+  condition:
+    // Fire if we see either kernel alert or network device alert (low threshold — these are high-confidence kernel messages)
+    $kernel_event or ($nw_event and #nw_event >= 3)
+}

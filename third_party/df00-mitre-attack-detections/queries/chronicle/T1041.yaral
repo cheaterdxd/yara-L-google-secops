@@ -1,0 +1,55 @@
+# T1041 — Exfiltration Over C2 Channel
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that matches UDM NETWORK_CONNECTION events over a 24-hour sliding window, grouping by hostname and process path.
+# Data Sources: Google Chronicle Unified Data Model (UDM) — NETWORK_CONNECTION events, Chronicle Forwarder with Windows Sysmon ingestion, CrowdStrike Falcon via Chronicle integration, Microsoft Defender for Endpoint via Chronicle ingestion
+# Required Sources: UDM Events (metadata.event_type = NETWORK_CONNECTION)
+# False Positives: PowerShell remoting (WinRM) sessions to a single management jumphost over extended work sessions score high on both IsHighFrequency and IsSingleDestination — add known management CIDR blocks to the NOT net.ip_in_range_cidr exclusions, Scripted data ingestion pipelines using curl or python that bulk-upload telemetry to a single SaaS observability endpoint (Datadog, Splunk HEC, Elastic Cloud) — exclude by matching process command-line regex against known upload endpoint hostnames, certutil.exe legitimately used in software packaging to download installers from a CDN will appear as high-frequency single-destination — filter by CommandLine containing '-urlcache' paired with known software vendor domains
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1041
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1041_exfiltration_over_c2_channel {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects data exfiltration over C2 channels: suspicious interpreter and transfer-utility processes making high-volume or high-frequency outbound connections to public IPs, consistent with implants embedding stolen data inside C2 protocol traffic (HTTP POST bodies, DNS labels, custom binary frames)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "TA0010"
+    mitre_attack_technique = "T1041"
+    reference = "https://attack.mitre.org/techniques/T1041/"
+    created = "2026-04-17"
+    false_positives = "Backup agents, cloud sync clients, CI/CD pipelines"
+
+  events:
+    $net.metadata.event_type = "NETWORK_CONNECTION"
+    $net.network.direction = "OUTBOUND"
+    $net.principal.process.file.full_path = /(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|python[23]?\.exe|ruby\.exe|perl\.exe|curl\.exe|wget\.exe|bitsadmin\.exe|ncat?\.exe)/
+    NOT net.ip_in_range_cidr($net.target.ip, "10.0.0.0/8")
+    NOT net.ip_in_range_cidr($net.target.ip, "172.16.0.0/12")
+    NOT net.ip_in_range_cidr($net.target.ip, "192.168.0.0/16")
+    NOT net.ip_in_range_cidr($net.target.ip, "127.0.0.0/8")
+    NOT net.ip_in_range_cidr($net.target.ip, "169.254.0.0/16")
+    $hostname = $net.principal.hostname
+    $process_path = $net.principal.process.file.full_path
+
+  match:
+    $hostname, $process_path over 24h
+
+  outcome:
+    $connection_count = count($net.metadata.id)
+    $unique_dest_ips = count_distinct($net.target.ip)
+    $total_bytes_sent = sum($net.network.sent_bytes)
+    $total_bytes_received = sum($net.network.received_bytes)
+    $dest_ip_list = array_distinct($net.target.ip)
+    $dest_port_list = array_distinct($net.target.port)
+    $is_high_volume = if($total_bytes_sent > 1048576, 1, 0)
+    $is_high_frequency = if($connection_count > 20, 1, 0)
+    $is_single_destination = if($unique_dest_ips == 1, 1, 0)
+    $exfil_score = $is_high_volume + $is_high_frequency + $is_single_destination
+
+  condition:
+    $net and $exfil_score >= 2
+}

@@ -1,0 +1,90 @@
+# T1548 — Abuse Elevation Control Mechanism
+# Tactic: Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three complementary Chronicle YARA-L 2.0 rules detecting abuse of elevation control mechanisms (T1548): Rule 1 matches PROCESS_LAUNCH events where a known UAC auto-elevate binary (18 binaries including fodhelper, eventvwr, sdclt, cmstp) spawns a shell or scripting interpreter child process.
+# Data Sources: Google Chronicle UDM (PROCESS_LAUNCH events from Windows endpoint agents), Google Chronicle UDM (REGISTRY_MODIFICATION events from Windows endpoint agents), Google Chronicle UDM (PROCESS_LAUNCH events from Linux endpoint agents)
+# Required Sources: UDM events (PROCESS_LAUNCH), UDM events (REGISTRY_MODIFICATION)
+# False Positives: Authorized IT management tooling that invokes colorcpl.exe, recdisc.exe, or msconfig.exe as part of OS hardening scripts and spawns cmd.exe for configuration validation steps, Enterprise software packaging tools (WiX, NSIS, InstallShield) that use dism.exe or wusa.exe as parent processes for package extraction, potentially spawning msiexec.exe as a child, Linux system accounts performing authorized chmod operations on application binaries during deployment pipelines; tune the Linux rule by adding allowlist conditions for known CI/CD service account UIDs
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1548
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule uac_bypass_autoelevate_child_spawn {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects UAC bypass via auto-elevate binaries spawning suspicious shell or scripting child processes (T1548.002)"
+    mitre_attack_tactic = "Privilege Escalation"
+    mitre_attack_technique = "T1548"
+    mitre_attack_subtechnique = "T1548.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.process.file.full_path = /(?i)(fodhelper|eventvwr|sdclt|cmstp|computerdefaults|slui|wsreset|dccw|pkgmgr|wusa|infdefaultinstall|msconfig|colorcpl|cliconfg|dism|eudcedit|iexpress|ntprint|recdisc)\.exe$/
+    $proc.target.process.file.full_path = /(?i)(cmd|powershell|pwsh|mshta|wscript|cscript|rundll32|regsvr32|msiexec|certutil|bitsadmin|wmic|regasm|regsvcs)\.exe$/
+    $proc.principal.hostname = $hostname
+
+  condition:
+    $proc
+}
+
+rule uac_bypass_registry_hijack_prep {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects registry key writes to ms-settings or mscfile shell open command paths used in fodhelper/eventvwr UAC bypass (T1548.002)"
+    mitre_attack_tactic = "Privilege Escalation"
+    mitre_attack_technique = "T1548"
+    mitre_attack_subtechnique = "T1548.002"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $reg.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      $reg.target.registry.registry_key = /(?i).*\\Software\\Classes\\ms-settings\\shell\\open\\command.*/ or
+      $reg.target.registry.registry_key = /(?i).*\\Software\\Classes\\mscfile\\shell\\open\\command.*/
+    )
+    $reg.principal.hostname = $hostname
+
+  condition:
+    $reg
+}
+
+rule linux_setuid_sudo_privilege_escalation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Linux privilege escalation via setuid bit manipulation or interactive sudo shell spawning by non-privileged accounts (T1548.001 / T1548.003)"
+    mitre_attack_tactic = "Privilege Escalation"
+    mitre_attack_technique = "T1548"
+    mitre_attack_subtechnique = "T1548.001"
+    severity = "HIGH"
+    priority = "MEDIUM"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    $linux.metadata.event_type = "PROCESS_LAUNCH"
+    $linux.principal.platform = "LINUX"
+    (
+      $linux.target.process.command_line = /(?i).*(chmod \+s|chmod u\+s|chmod 4755|chmod 4777|chmod 6755).*/  or
+      (
+        $linux.target.process.file.full_path = /(?i).*\/sudo$/ and
+        $linux.target.process.command_line = /(?i)sudo\s+(-s|su|bash|sh|\/bin\/(bash|sh)|python[23]?|perl|ruby).*/
+      ) or
+      $linux.target.process.file.full_path = /(?i).*\/(pkexec|doas)$/
+    )
+    not $linux.principal.user.userid = "root"
+    not $linux.principal.user.userid = "daemon"
+    not $linux.principal.user.userid = "nobody"
+    $linux.principal.hostname = $hostname
+
+  condition:
+    $linux
+}

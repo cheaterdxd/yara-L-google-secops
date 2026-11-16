@@ -1,0 +1,46 @@
+# T1052.001 — Exfiltration over USB
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle UDM that sequences a DEVICE_UNCATEGORIZED event with USB/removable descriptors against at least 5 FILE_CREATION events targeting removable drive paths (D-J:\) with sensitive file extensions, all correlated by hostname and user within a 1-hour sliding window.
+# Data Sources: Chronicle Forwarder with Windows endpoint agent, Microsoft Defender for Endpoint logs ingested into Chronicle, Sysmon telemetry mapped to Chronicle UDM via parser
+# Required Sources: UDM events: FILE_CREATION, DEVICE_UNCATEGORIZED
+# False Positives: Authorized IT archival workflows where administrators copy compressed system backup files to USB drives attached to servers during scheduled maintenance windows, Software staging processes in which a deployment script copies application installers or update packages (ZIP, MSI wrapped in archives) to removable media for air-gapped delivery, Compliance-driven document export where legal or audit teams copy regulated records in bulk to encrypted USB storage as part of discovery or e-disclosure requests
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1052.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1052_001_usb_exfiltration {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects USB device connection followed by bulk sensitive file writes to removable drive paths, indicating potential data exfiltration via USB (T1052.001)"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1052.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    platform = "Windows"
+    version = "1.0"
+
+  events:
+    $usb.metadata.event_type = "DEVICE_UNCATEGORIZED"
+    $usb.metadata.description = /(?i)(usb|removable|flash|thumb|diskdrive)/
+    $usb.principal.hostname = $hostname
+
+    $file.metadata.event_type = "FILE_CREATION"
+    $file.target.file.full_path = /(?i)^[d-j]:\\/
+    $file.target.file.extension = /(?i)^(zip|rar|7z|tar|gz|docx?|xlsx?|pptx?|pdf|csv|db|kdbx|pfx|pem|key)$/
+    $file.principal.hostname = $hostname
+    $file.principal.user.userid = $user
+
+    $file.metadata.event_timestamp.seconds >
+        $usb.metadata.event_timestamp.seconds
+    $file.metadata.event_timestamp.seconds <
+        $usb.metadata.event_timestamp.seconds + 3600
+
+  match:
+    $hostname, $user over 1h
+
+  condition:
+    $usb and #file >= 5
+}

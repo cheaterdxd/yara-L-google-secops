@@ -1,0 +1,76 @@
+# T1491 — Defacement
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules covering all T1491 Defacement branches: (1) suspicious processes writing web content files to web root paths, (2) registry wallpaper and logon banner key modifications by scripting tools, (3) web server processes spawning shell or interpreter children indicating webshell compromise.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM ingestion from Windows Sysmon, Chronicle UDM ingestion from CrowdStrike Falcon, Chronicle UDM ingestion from Carbon Black
+# Required Sources: UDM Events (FILE_CREATION), UDM Events (REGISTRY_MODIFICATION), UDM Events (PROCESS_LAUNCH)
+# False Positives: Legitimate automated deployments by CI/CD systems writing HTML, PHP, or asset files to web roots using curl or PowerShell scripts, Enterprise desktop policy enforcement scripts that set wallpaper images or logon banners as part of onboarding or compliance workflows, Web servers (Apache, Nginx) that legitimately invoke shell scripts as CGI handlers or maintenance hooks, Content management systems with auto-update capabilities that write PHP or JS files as part of plugin or theme updates, Penetration testing or red team exercises targeting web infrastructure with explicit change management approval
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1491
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1491_defacement_web_file_modification {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1491 Defacement - suspicious process writing web content files to web server directories"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1491"
+    severity = "HIGH"
+    priority = "HIGH"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    (
+      re.regex($e.target.file.full_path, `(?i)(\\inetpub\\wwwroot|\\htdocs|\\public_html|\\nginx\\html|/var/www/|/srv/http/|/usr/share/nginx/)`) or
+      re.regex($e.target.file.full_path, `(?i)/home/www/`)
+    )
+    re.regex($e.target.file.full_path, `(?i)\.(html|htm|php|asp|aspx|jsp|js|css|png|jpg|gif|svg|ico)$`)
+    re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|curl\.exe|wget\.exe|certutil\.exe|bitsadmin\.exe|python[23]?\.exe|perl\.exe|ruby\.exe|/bash$|/sh$)`)
+
+  condition:
+    $e
+}
+
+rule t1491_defacement_registry_wallpaper {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1491 Internal Defacement - registry modifications targeting wallpaper, screensaver, and logon banner keys by suspicious processes"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1491.001"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($e.target.registry.registry_key, `(?i)(\\Control Panel\\Desktop|\\Terminal Server\\Winlogon|\\Windows NT\\CurrentVersion\\Winlogon|\\Policies\\Microsoft\\Windows\\Personalization)`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)(Wallpaper|ScreenSaveActive|SCRNSAVE\.EXE|legalnoticecaption|legalnoticetext)`)
+    )
+    re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|python[23]?\.exe|/bash$|/sh$)`)
+
+  condition:
+    $e
+}
+
+rule t1491_defacement_webserver_shell_spawn {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1491 Defacement - web server process spawning shell or script interpreter, indicating possible webshell execution"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1491.002"
+    severity = "CRITICAL"
+    priority = "CRITICAL"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($e.principal.process.file.full_path, `(?i)(w3wp\.exe|nginx\.exe|httpd\.exe|apache2|tomcat)`)
+    re.regex($e.target.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|/bash$|/sh$|python[23]?\.exe|perl\.exe)`)
+
+  condition:
+    $e
+}

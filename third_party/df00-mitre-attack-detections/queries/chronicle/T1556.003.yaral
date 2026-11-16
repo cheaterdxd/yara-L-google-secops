@@ -1,0 +1,45 @@
+# T1556.003 — Pluggable Authentication Modules
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule using UDM file events to identify PAM authentication library modifications.
+# Data Sources: Google Chronicle UDM (Universal Data Model), Linux endpoint telemetry ingested via Chronicle forwarder, Auditd logs normalized to Chronicle UDM by Chronicle parsers
+# Required Sources: UDM Events — FILE_MODIFICATION, FILE_CREATION, FILE_MOVE event types
+# False Positives: Distribution package manager upgrades of libpam that install a new pam_unix.so — excluded when the package manager binary is the direct initiating process, but postinstall ldconfig or update-alternatives calls may match if their parent is not captured in the process chain, Containerized workloads building Docker images that COPY a custom PAM configuration into a Linux base image during docker build — these appear as file creation events but occur within ephemeral build namespaces and may not represent host-level compromise, Puppet or Chef client runs applying an initial PAM configuration baseline to a freshly provisioned host before it enters the production asset inventory — correlate $e.principal.hostname against provisioning pipeline records for the same timestamp window
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule pam_module_modification {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects unauthorized creation, modification, or renaming of PAM shared library modules and configuration files. Indicative of T1556.003 backdoor installation tactics used by Skidmap and similar malware that replace pam_unix.so to accept a hardcoded backdoor password for any account."
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1556.003"
+    mitre_attack_technique_name = "Pluggable Authentication Modules"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+    created = "2025-01-01"
+
+  events:
+    (
+      $e.metadata.event_type = "FILE_MODIFICATION" or
+      $e.metadata.event_type = "FILE_CREATION" or
+      $e.metadata.event_type = "FILE_MOVE"
+    )
+    (
+      re.regex($e.target.file.full_path, `/lib(64)?/security/pam_unix\.so`) or
+      re.regex($e.target.file.full_path, `/usr/lib(64)?/security/pam_unix\.so`) or
+      re.regex($e.target.file.full_path,
+        `/lib/(x86_64|aarch64|armhf|arm64)-linux-gnu/security/pam_unix\.so`) or
+      re.regex($e.target.file.full_path, `/etc/pam\.d/`) or
+      $e.target.file.full_path = "/etc/pam.conf"
+    )
+    not re.regex($e.principal.process.file.full_path,
+      `/(apt|apt-get|dpkg|rpm|yum|dnf|zypper|pacman|pip3?|ldconfig|update-alternatives)$`)
+
+  condition:
+    $e
+}

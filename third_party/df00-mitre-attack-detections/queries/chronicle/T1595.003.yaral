@@ -1,0 +1,27 @@
+# T1595.003 — Wordlist Scanning
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule for Wordlist Scanning (T1595.003).
+# Data Sources: Google Chronicle SIEM, Chronicle UDM
+# Required Sources: NETWORK_HTTP, NETWORK_CONNECTION
+# False Positives: Internal vulnerability scanners (Nessus, Qualys, Tenable, Rapid7) running authorized scans from known IPs with recognizable User-Agent strings, Authorized penetration testing engagements by third-party firms using gobuster, ffuf, DirBuster, or similar tools, Legitimate SEO crawlers, web archival bots (archive.org), or monitoring services that probe large numbers of URLs and generate 404s, CI/CD pipeline integration tests or automated health checks that probe non-existent endpoints at high frequency
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1595.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1595_003_wordlist_scanning {
+  meta:
+    author = "df00tech"
+    description = "Detects Wordlist Scanning (T1595.003)"
+    mitre_attack_tactic = "TA0043"
+    mitre_attack_technique = "T1595.003"
+    confidence = "medium"
+    severity = "medium"
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.principal.ip != ""
+  condition:
+    $e
+}

@@ -1,0 +1,53 @@
+# T1033 — System Owner/User Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1033 System Owner/User Discovery.
+# Data Sources: Chronicle UDM with Windows Event Forwarding, Chronicle with CrowdStrike Falcon telemetry, Chronicle with Carbon Black EDR, Chronicle with Microsoft Defender for Endpoint via SIEM connector
+# Required Sources: UDM events (PROCESS_LAUNCH)
+# False Positives: Legitimate system health check scripts invoked from cmd.exe or PowerShell that use whoami or Get-LocalUser to validate service account permissions during automated maintenance windows, Enterprise monitoring agents such as Splunk Universal Forwarder, Elastic Agent, or SolarWinds that run periodic user context checks using wmic or PowerShell cmdlets, Developer workstations where build automation tools (MSBuild, InstallUtil) spawn PowerShell to query the current user context for path resolution or permission checks during software compilation
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1033
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1033_System_Owner_User_Discovery {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1033 System Owner/User Discovery via execution of user enumeration utilities with suspicious parent process or elevated privilege context"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1033"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1033/"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\whoami\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i).*(/all|/groups|/priv|/fo).*`)
+      ) or
+      re.regex($e.target.process.file.full_path, `(?i).*\\(query|qwinsta|quser)\.exe$`) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i).*(useraccount).*`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\net1?\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i).*(user\s+/domain|localgroup\s+administrators|group\s+/domain).*`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i).*\\(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i).*(Get-LocalUser|Get-ADUser|Win32_UserAccount|WindowsIdentity|whoami).*`)
+      )
+    )
+    (
+      re.regex($e.principal.process.file.full_path, `(?i).*\\(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|schtasks|msbuild|installutil)\.exe$`) or
+      re.regex($e.principal.user.userid, `(?i).*(system|administrator|admin).*`) or
+      re.regex($e.target.process.command_line, `(?i).*(/all|/groups|/priv|/fo|useraccount|Get-LocalUser|Get-ADUser|WindowsIdentity|user\s*/domain|localgroup administrators).*`)
+    )
+
+  condition:
+    $e
+}

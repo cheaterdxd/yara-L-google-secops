@@ -1,0 +1,38 @@
+# T1070.002 — Clear Linux or Mac System Logs
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting FILE_DELETION and FILE_MODIFICATION UDM events targeting system log paths on Linux (/var/log/) and macOS (/Library/Logs/, /private/var/log/).
+# Data Sources: Google Chronicle UDM (Unified Data Model) — Linux endpoint telemetry, Chronicle ingestion from CrowdStrike Falcon, Carbon Black, or SentinelOne normalized to UDM, Chronicle Forwarder with auditd or osquery Linux log source
+# Required Sources: UDM events (Chronicle normalized event store), FILE_DELETION and FILE_MODIFICATION event types
+# False Positives: Legitimate log archival and cleanup scripts executed by the root or syslog service account that are not excluded by the process path regex — extend the exclusion regex with additional binary paths as needed, macOS newsyslog or asl rotation triggered by launchd on a schedule that does not match the aslmanager exclusion — verify principal.process.file.full_path in matched events, SIEM or observability agent upgrades that briefly modify or recreate log files they are tailing, particularly Elastic Agent or Splunk UF self-update routines
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1070.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule linux_mac_system_log_cleared {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects deletion or truncation of Linux and macOS system log files by unauthorized processes — T1070.002"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1070.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "FILE_DELETION"
+      or $e.metadata.event_type = "FILE_MODIFICATION"
+    )
+    re.regex($e.target.file.full_path, `/var/log/|/Library/Logs/|/private/var/log/`)
+    (
+      re.regex($e.target.file.full_path, `\.log$`)
+      or re.regex($e.target.file.full_path, `(auth\.log|syslog|messages|secure|wtmp|btmp|lastlog|kern\.log)$`)
+    )
+    not re.regex($e.principal.process.file.full_path, `(logrotate|newsyslog|rsyslog|syslogd|aslmanager)$`)
+
+  condition:
+    $e
+}

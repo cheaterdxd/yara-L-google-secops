@@ -1,0 +1,69 @@
+# T1528 — Steal Application Access Token
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1528 application access token theft across three behavioral vectors using the Unified Data Model (UDM): (1) NETWORK_CONNECTION events where target.ip is 169.254.169.254 and the HTTP request URL targets credential-bearing IMDS paths for Azure Managed Identity, AWS IAM instance role, or GCP service account tokens, from processes not in the native agent allowlist; (2) FILE_OPEN or FILE_READ events targeting Kubernetes service account token paths from non-orchestration processes; and (3) FILE_OPEN or FILE_READ events targeting OAuth and cloud CLI token cache files from processes outside the expected toolchain.
+# Data Sources: Chronicle UDM endpoint events (FILE_OPEN, FILE_READ, NETWORK_CONNECTION), Google Chronicle Forwarder with Windows or Linux endpoint collection, CrowdStrike Falcon, Microsoft Defender for Endpoint, or SentinelOne via Chronicle integration, Google Cloud audit logs via Chronicle GCP native integration
+# Required Sources: UDM event_type: NETWORK_CONNECTION, UDM event_type: FILE_OPEN, UDM event_type: FILE_READ, UDM fields: principal.process.file.full_path, target.ip, target.file.full_path, network.http.request_url
+# False Positives: Azure VM extensions and the Windows Azure Guest Agent legitimately contact 169.254.169.254 for managed identity token refresh — the exclusion regex must match exact binary names in your cloud environment, including full paths like /usr/sbin/waagent on Linux, HashiCorp Vault agent injector and AWS IAM Roles for Service Accounts (IRSA) mechanisms cause legitimate IMDS traffic from workload processes — add verified workload binary names to the not re.regex() exclusion for each environment tier, Developer containers using Telepresence, minikube, or KIND (Kubernetes in Docker) environments frequently access service account tokens as part of local cluster authentication — correlate principal.ip with known developer subnet ranges before escalating
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1528
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1528_steal_application_access_token {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects T1528 - Steal Application Access Token via IMDS queries, Kubernetes token reads, and OAuth token cache access"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1528"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1528/"
+    false_positives = "Cloud VM agents, Kubernetes orchestration processes, cloud CLI toolchains"
+    version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "NETWORK_CONNECTION" or
+      $e.metadata.event_type = "FILE_OPEN" or
+      $e.metadata.event_type = "FILE_READ"
+    )
+    (
+      // Vector 1: Cloud IMDS token requests from non-native processes
+      (
+        $e.metadata.event_type = "NETWORK_CONNECTION" and
+        $e.target.ip = "169.254.169.254" and
+        (
+          re.regex($e.network.http.request_url, `metadata/identity`) or
+          re.regex($e.network.http.request_url, `iam/security-credentials`) or
+          re.regex($e.network.http.request_url, `computeMetadata/v1/instance/service-accounts`) or
+          re.regex($e.network.http.request_url, `metadata/instance`)
+        ) and
+        not re.regex($e.principal.process.file.full_path, `(?i)(waagent\.exe|WindowsAzureGuestAgent\.exe|WaAppAgent\.exe|MonAgentCore\.exe|HealthService\.exe|MMAExtensionHeartbeatService\.exe|AzureAttestService\.exe|azd\.exe|AzureCLI\.exe)`)
+      ) or
+      // Vector 2: Kubernetes service account token reads by unexpected processes
+      (
+        ($e.metadata.event_type = "FILE_OPEN" or $e.metadata.event_type = "FILE_READ") and
+        (
+          re.regex($e.target.file.full_path, `/var/run/secrets/kubernetes\.io/serviceaccount`) or
+          re.regex($e.target.file.full_path, `/run/secrets/kubernetes\.io`) or
+          re.regex($e.target.file.full_path, `/var/run/secrets/tokens`)
+        ) and
+        not re.regex($e.principal.process.file.full_path, `(?i)(kubelet|pause|containerd-shim|containerd-shim-runc-v2|runc|cri-o|dockerd)`)
+      ) or
+      // Vector 3: OAuth and cloud CLI token cache file access by unexpected processes
+      (
+        ($e.metadata.event_type = "FILE_OPEN" or $e.metadata.event_type = "FILE_READ") and
+        (
+          re.regex($e.target.file.full_path, `(?i)(msal_token_cache\.(json|bin)|accessTokens\.json|application_default_credentials\.json|azureProfile\.json|\.git-credentials|TokenCache\.dat)`) or
+          re.regex($e.target.file.full_path, `\.config/gcloud/.+\.json`) or
+          re.regex($e.target.file.full_path, `/\.azure/.+\.json`)
+        ) and
+        not re.regex($e.principal.process.file.full_path, `(?i)(gcloud(\.exe)?$|aws(\.exe)?$|az(\.exe)?$|gh(\.exe)?$|git(\.exe)?$|terraform(\.exe)?$|kubectl(\.exe)?$|Code\.exe$|^code$)`)
+      )
+    )
+
+  condition:
+    $e
+}

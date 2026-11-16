@@ -1,0 +1,98 @@
+# T1530 — Data from Cloud Storage
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule for T1530 covering three cloud storage exfiltration patterns: (1) AWS S3 object access and bucket enumeration via CloudTrail UDM events; (2) OneDrive/SharePoint bulk downloads via Office 365 audit UDM events; (3) Azure Storage account key listing or configuration changes matching Storm-0501 exfil staging behavior.
+# Data Sources: AWS CloudTrail (Chronicle log_type: AWS_CLOUDTRAIL), Microsoft Office 365 Audit (Chronicle log_type: OFFICE_365), Azure Activity Logs (Chronicle log_type: AZURE_ACTIVITY)
+# Required Sources: UDM events table (Chronicle SIEM unified data model)
+# False Positives: Legitimate cloud data sync services using tools that match the user-agent regex (e.g., corporate rclone deployments for authorized cross-account S3 replication) will fire tool_detected for every sync window, Azure DevOps release pipelines that call ListKeys as part of dynamic secret retrieval during deployment will trigger the storage_config_change condition on each pipeline run, High-volume SharePoint collaboration portals where multiple users in the same office (shared NAT IP) each download >10 files within 30 minutes, causing the aggregated $event_count to exceed 50 for the shared source IP
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1530
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1530_data_from_cloud_storage {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects bulk data exfiltration from cloud storage services including AWS S3, Azure Blob Storage, and Microsoft 365 OneDrive/SharePoint. Covers anonymous access, known exfiltration tools (rclone, pacu, aadInternals), mass downloads exceeding threshold, and Azure Storage key listing or config changes used by Storm-0501 for exfil staging."
+    mitre_attack_technique = "T1530"
+    mitre_attack_tactic = "Collection"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platforms = "AWS, Azure, GCP, Microsoft365"
+    reference = "https://attack.mitre.org/techniques/T1530/"
+
+  events:
+    (
+      (
+        $e.metadata.log_type = "AWS_CLOUDTRAIL"
+        and $e.target.resource.resource_type = "STORAGE_OBJECT"
+        and $e.metadata.product_event_type in (
+          "GetObject", "ListBucket", "ListObjects", "ListObjectsV2",
+          "GetBucketAcl", "GetBucketPolicy", "GetBucketPublicAccessBlock"
+        )
+        and not $e.security_result.action = "BLOCK"
+      )
+      or
+      (
+        $e.metadata.log_type = "OFFICE_365"
+        and $e.target.resource.attribute.cloud.availability_zone in (
+          "OneDrive", "SharePoint"
+        )
+        and $e.metadata.product_event_type in (
+          "FileDownloaded", "FileSyncDownloadedFull",
+          "FileAccessed", "FileCopied"
+        )
+      )
+      or
+      (
+        $e.metadata.log_type = "AZURE_ACTIVITY"
+        and $e.metadata.product_event_type in (
+          "MICROSOFT.STORAGE/STORAGEACCOUNTS/WRITE",
+          "MICROSOFT.STORAGE/STORAGEACCOUNTS/BLOBSERVICES/WRITE",
+          "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION",
+          "MICROSOFT.STORAGE/STORAGEACCOUNTS/REGENERATEKEY/ACTION"
+        )
+        and $e.security_result.action = "ALLOW"
+      )
+    )
+    $e.principal.ip != ""
+    $e.principal.ip = $src_ip
+    $e.principal.user.userid = $user
+
+  match:
+    $src_ip, $user over 30m
+
+  outcome:
+    $event_count = count($e.metadata.id)
+    $unique_objects = count_distinct($e.target.resource.product_object_id)
+    $anon_count = sum(
+      if($e.principal.user.userid = "Anonymous"
+        or $e.principal.user.userid = "AnonUser"
+        or re.regex($e.principal.user.userid, `(?i)^anon`),
+        1, 0)
+    )
+    $tool_detected = max(
+      if(re.regex($e.network.http.user_agent,
+        `(?i)(rclone\/|pacu|aadInternals|aws-cli\/|boto3\/|python-requests\/|s3browser|CloudBerry)`),
+        1, 0)
+    )
+    $storage_config_change = max(
+      if($e.metadata.product_event_type in (
+        "MICROSOFT.STORAGE/STORAGEACCOUNTS/LISTKEYS/ACTION",
+        "MICROSOFT.STORAGE/STORAGEACCOUNTS/REGENERATEKEY/ACTION"
+      ), 1, 0)
+    )
+    $suspicion_score =
+      if($anon_count > 0, 3, 0)
+      + if($event_count > 500, 3, if($event_count > 100, 2, if($event_count > 50, 1, 0)))
+      + if($unique_objects > 20, 1, 0)
+      + if($tool_detected > 0, 2, 0)
+      + if($storage_config_change > 0, 2, 0)
+
+  condition:
+    $event_count > 50
+    or $anon_count > 0
+    or $tool_detected > 0
+    or $storage_config_change > 0
+}

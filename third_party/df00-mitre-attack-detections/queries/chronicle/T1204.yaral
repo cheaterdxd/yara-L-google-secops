@@ -1,0 +1,55 @@
+# T1204 — User Execution
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1204 User Execution across three behavioral patterns: office and browser applications spawning shell interpreters (document-based phishing and malicious macros), remote access tool execution indicating social engineering or tech support scams, and explorer-spawned executables from user-writable directories associated with ClickFix, ClearFake, and downloaded malware.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM), Windows Endpoint Detection (via Chronicle Forwarder or partner ingestion)
+# Required Sources: PROCESS_LAUNCH UDM events
+# False Positives: Finance or operations teams using Excel macros that legitimately call PowerShell or cmd.exe as part of automated data processing or ERP integrations, Authorized remote desktop tools deployed by managed service providers or IT teams for legitimate support sessions, especially in organizations without centralized MDM whitelisting, Developers and power users running downloaded installers or portable tools directly from the Downloads or Desktop folder during evaluation or onboarding
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1204
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1204_user_execution {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1204 User Execution via office/browser shell spawn, RAT execution, or executables from user-writable directories"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1204"
+    mitre_attack_technique_name = "User Execution"
+    severity = "HIGH"
+    priority = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1204/"
+    created = "2026-04-19"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.metadata.product_name = "WINDOWS"
+
+    // Pattern 1: Office/Browser spawning shell interpreter
+    (
+      re.regex($e.principal.process.file.full_path,
+        `(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|mspub\.exe|onenote\.exe|visio\.exe|acrord32\.exe|acrobat\.exe|foxitreader\.exe|chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe)$`)
+      and re.regex($e.target.process.file.full_path,
+        `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe)$`)
+    )
+    or
+    // Pattern 2: RAT binary execution (social engineering)
+    re.regex($e.target.process.file.full_path,
+      `(?i)(anydesk\.exe|teamviewer\.exe|screenconnect\.exe|connectwisecontrol\.exe|splashtopstreamer\.exe|ultraviewer\.exe|rustdesk\.exe|supremo\.exe|radmin\.exe|atera_agent\.exe|netsupport\.exe|level\.exe|fleetdeck\.exe)$`)
+    or
+    // Pattern 3: Executable launched from user-writable directory via Explorer
+    (
+      re.regex($e.principal.process.file.full_path, `(?i)explorer\.exe$`)
+      and re.regex($e.target.process.file.full_path, `(?i)\.exe$`)
+      and re.regex($e.target.process.file.full_path,
+        `(?i)(\\Downloads\\|\\Desktop\\|\\AppData\\Local\\Temp\\|\\Users\\Public\\|\\AppData\\Roaming\\)`)
+      and not re.regex($e.target.process.file.full_path,
+        `(?i)(OneDriveSetup\.exe|Teams\.exe|Slack\.exe|Zoom\.exe|update\.exe|setup\.exe)$`)
+    )
+
+  condition:
+    $e
+}

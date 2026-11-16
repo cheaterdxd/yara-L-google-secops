@@ -1,0 +1,58 @@
+# T1027.005 — Indicator Removal from Tools
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1027.005 Indicator Removal from Tools by matching process launch UDM events where command line or full process path contains known AV bypass tools (Find-AVSignature, Shellter), .NET obfuscators (ConfuserEx, de4dot), PE editors (PE Studio, PE-bear), and shellcode injectors.
+# Data Sources: Google Chronicle UDM via Windows Event Forwarding, Chronicle Ingestion API with Sysmon parser, CrowdStrike Falcon Chronicle integration
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Security research environments where analysts legitimately use reverse engineering tools — create reference lists of trusted analyst hostnames and exclude via Chronicle reference list lookups, Software build pipelines using ConfuserEx or SmartAssembly for code protection — whitelist CI/CD server principal hostnames in the rule condition, Red team or penetration testing activities on pre-authorised targets — correlate against authorised engagement windows in a Chronicle reference list
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_005_indicator_removal_from_tools {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1027.005 - Indicator Removal from Tools via execution of known AV bypass, .NET obfuscation, PE manipulation, and shellcode injection utilities"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.005"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1027/005/"
+    severity = "HIGH"
+    priority = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.command_line,
+        `(?i)(find-avsignature|invoke-avbypass|avbypass|defeatdefender|confuserex|confuser(?!ex)|de4dot|dnspy|ilspy|pe-bear|cff.explorer|pestudio|hyperion|veil-evasion|shellter|avet|venom(?!om)|phantom-evasion|dnguard|dotfuscator|smartassembly)`)
+      or
+      re.regex($e.target.process.file.full_path,
+        `(?i)(confuserex|de4dot|dnspy|ilspy|pe-bear|pestudio|hyperion|shellter)`)
+    )
+    $e.principal.hostname = $hostname
+    $e.principal.user.userid = $user
+
+  match:
+    $hostname, $user over 5m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.target.process.command_line, `(?i)(find-avsignature|invoke-avbypass)`), 85,
+      if(re.regex($e.target.process.command_line, `(?i)(shellter|phantom-evasion|avet)`), 90,
+      if(re.regex($e.target.process.command_line, `(?i)(confuserex|de4dot)`), 75, 70)))
+    )
+    $detection_category = array_distinct(
+      if(re.regex($e.target.process.command_line, `(?i)(find-avsignature|invoke-avbypass|avbypass)`) , "PowerSploit_AV_Bypass",
+      if(re.regex($e.target.process.command_line, `(?i)(confuserex|confuser|de4dot|dnspy|ilspy|dnguard|smartassembly)`), "NET_Obfuscator_Tool",
+      if(re.regex($e.target.process.command_line, `(?i)(shellter|avet|venom|phantom-evasion)`), "Shellcode_Injector",
+      "PE_Manipulation_Tool")))
+    )
+    $process_count = count_distinct($e.target.process.pid)
+
+  condition:
+    $e
+}

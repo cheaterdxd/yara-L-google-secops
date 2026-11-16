@@ -1,0 +1,39 @@
+# T1055.015 — ListPlanting
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting ListPlanting T1055.015 by matching UDM PROCESS_OPEN events where a non-system process opens explorer.exe with access masks consistent with memory write operations.
+# Data Sources: Microsoft-Windows-Sysmon, Windows Event Logs
+# Required Sources: UDM Events (event_type: PROCESS_OPEN)
+# False Positives: Endpoint detection and response platform agents that open handles to explorer.exe with PROCESS_ALL_ACCESS for live memory forensics or behavioral telemetry collection, Windows accessibility features such as Narrator or Magnifier that inject into the shell process, and third-party screen readers that require VM_WRITE to render accessible overlays, Enterprise application delivery platforms (e.g., Citrix Virtual Apps, VMware App Volumes) that hook into explorer.exe during application layer attachment, requiring elevated process access
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055.015
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule list_planting_explorer_process_access {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects ListPlanting T1055.015 via suspicious cross-process PROCESS_OPEN events targeting explorer.exe with access masks that include write or all-access rights needed to inject code into SysListView32 controls"
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1055.015"
+    severity = "HIGH"
+    confidence = "HIGH"
+    rule_version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_OPEN"
+    $e.target.process.file.full_path = /(?i).*\\explorer\.exe$/
+    not $e.principal.process.file.full_path = /(?i).*\\(explorer|csrss|dwm|winlogon|ShellExperienceHost|SearchUI|sihost|taskhostw|RuntimeBroker)\.exe$/
+    (
+      $e.additional.fields["GrantedAccess"] = "0x1FFFFF" or
+      $e.additional.fields["GrantedAccess"] = "0x001F0FFF" or
+      $e.additional.fields["GrantedAccess"] = "0x1F3FFF" or
+      $e.additional.fields["GrantedAccess"] = "0x0020" or
+      $e.additional.fields["GrantedAccess"] = "0x1F1FFF" or
+      $e.additional.fields["GrantedAccess"] = "0x143A"
+    )
+
+  condition:
+    $e
+}

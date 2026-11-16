@@ -1,0 +1,66 @@
+# T1548.006 — TCC Manipulation
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting TCC manipulation via direct TCC.db modification by unauthorized processes, SQLite command-line injection targeting the TCC database, environment variable abuse for rogue TCC database loading, and Finder spawning interpreter processes to inherit Full Disk Access.
+# Data Sources: Chronicle SIEM, Google Chronicle macOS endpoint telemetry
+# Required Sources: udm.events
+# False Positives: MDM enrollment workflows where mdmclient or a managed profile process modifies TCC.db for privacy policy deployment, macOS OS upgrade assistants that rebuild the TCC database as part of migration, Legitimate Finder-executed AppleScript workflows where users have explicitly built Automator or Shortcuts tasks
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1548.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule tcc_manipulation_macos {
+  meta:
+    author = "argus-v1"
+    description = "Detects macOS TCC database manipulation including direct DB writes, SQLite injection, environment variable abuse, and Finder TCC inheritance attacks"
+    severity = "HIGH"
+    tactic = "TA0005"
+    technique = "T1548.006"
+    platforms = "macOS"
+
+  events:
+    (
+      // Direct TCC.db file modification by non-system process
+      (
+        $e.metadata.event_type = "FILE_MODIFICATION"
+        and re.regex($e.target.file.full_path, `/com\.apple\.TCC/TCC\.db`)
+        and not $e.principal.process.file.full_path in (
+          "/usr/libexec/tccd",
+          "/usr/libexec/syspolicyd",
+          "/usr/libexec/mdmclient"
+        )
+      )
+      or
+      // SQLite TCC injection via command line
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and (
+          re.regex($e.principal.process.command_line, `sqlite3.*TCC\.db`)
+          or re.regex($e.principal.process.command_line, `INSERT INTO access`)
+          or re.regex($e.principal.process.command_line, `UPDATE access.*TCC`)
+          or re.regex($e.principal.process.command_line, `SQLITE_TMPDIR`)
+          or re.regex($e.principal.process.command_line, `HOME_TCC_DB`)
+        )
+      )
+      or
+      // Finder spawning scripting interpreters (TCC inheritance)
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.principal.process.file.full_path, `\.app/Contents/MacOS/Finder$`)
+        and $e.target.process.file.full_path in (
+          "/usr/bin/osascript",
+          "/bin/bash",
+          "/bin/sh",
+          "/bin/zsh",
+          "/usr/bin/python3",
+          "/usr/bin/ruby",
+          "/usr/bin/perl"
+        )
+      )
+    )
+
+  condition:
+    $e
+}

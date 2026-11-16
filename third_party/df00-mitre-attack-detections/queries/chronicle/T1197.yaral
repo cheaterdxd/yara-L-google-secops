@@ -1,0 +1,60 @@
+# T1197 — BITS Jobs
+# Tactic: Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting BITS job abuse via bitsadmin.exe or PowerShell BITS cmdlets.
+# Data Sources: Google Chronicle SIEM, Windows Endpoint Telemetry via Chronicle Forwarder, Sysmon UDM Ingestion
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Legitimate Windows Update or Defender signature updates using bitsadmin.exe targeting microsoft.com — the domain regex exclusion handles most cases but monitor for edge cases with URL redirection through intermediate CDN domains, Enterprise patch management systems (WSUS, Intune) invoking BITS for package distribution to ProgramData — validate parent process is a known management agent (MicrosoftEdgeUpdate.exe, MsMpEng.exe, etc.), Developer or DevOps scripts using Start-BitsTransfer to download build artifacts or dependencies to local temp directories — correlate principal.user.userid with known developer accounts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1197
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule bits_jobs_abuse_t1197 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects BITS job abuse via bitsadmin.exe or PowerShell BITS cmdlets for payload download, persistence via notification commands, or staging to suspicious directories. Maps to MITRE ATT&CK T1197."
+    mitre_attack_tactic = "Persistence, Defense Evasion"
+    mitre_attack_technique = "T1197"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-18"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path != ""
+
+    (
+      // Branch 1: bitsadmin.exe with suspicious arguments
+      (
+        re.regex($e.target.process.file.full_path, `(?i)bitsadmin\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)(/SetNotifyCmdLine|/SetNotifyFlags|/transfer|/addfile|/reset)`) or
+          re.regex($e.target.process.command_line, `(?i)(\\AppData\\|\\Users\\Public\\|\\ProgramData\\|\\Windows\\Temp\\|C:\\Temp\\)`) or
+          re.regex($e.target.process.command_line, `(?i)\.(exe|dll|ps1|bat|cmd|vbs|js|hta)(\s|$)`) or
+          (
+            re.regex($e.target.process.command_line, `https?://`) and
+            not re.regex($e.target.process.command_line, `(?i)(microsoft\.com|windowsupdate\.com|windows\.com)`)
+          )
+        )
+      ) or
+      // Branch 2: PowerShell BITS cmdlets with suspicious indicators
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(Start-BitsTransfer|New-BitsTransfer|Add-BitsFile|Get-BitsTransfer|Set-BitsTransfer)`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)(\\AppData\\|\\Users\\Public\\|\\ProgramData\\|\\Windows\\Temp\\)`) or
+          (
+            re.regex($e.target.process.command_line, `https?://`) and
+            not re.regex($e.target.process.command_line, `(?i)(microsoft\.com|windowsupdate\.com|windows\.com)`)
+          ) or
+          re.regex($e.target.process.command_line, `(?i)\.(exe|dll|ps1|bat|cmd|vbs|hta)(\s|$)`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

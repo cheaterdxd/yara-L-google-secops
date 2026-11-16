@@ -1,0 +1,72 @@
+# T1529 — System Shutdown/Reboot
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1529 System Shutdown/Reboot abuse across Windows, Linux, and macOS endpoints.
+# Data Sources: Chronicle UDM (Google Security Operations), Endpoint telemetry via Chronicle forwarder, Windows Sysmon via Chronicle ingestion, Linux/macOS audit logs via Chronicle forwarder
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Enterprise endpoint management tools (Microsoft Endpoint Configuration Manager, Jamf, Intune) that issue scheduled shutdowns and reboots via PowerShell or system utilities with /f or /t 0 flags, Linux infrastructure automation using Ansible or SaltStack that calls 'systemctl reboot' or 'shutdown -h now' as part of rolling update pipelines, Cloud instance lifecycle hooks that invoke shutdown commands when auto-scaling groups terminate instances, generating shutdown process events on ephemeral hosts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1529
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1529_system_shutdown_reboot {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1529 System Shutdown/Reboot abuse including shutdown.exe with suspicious flags, PowerShell Windows API abuse (ExitWindowsEx, NtRaiseHardError, ZwRaiseHardError), and Linux/macOS native shutdown utilities. Covers destructive malware patterns from WhisperGate, LockerGoga, Olympic Destroyer, and BFG Agonizer."
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1529"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path != ""
+
+    (
+      // Branch 1: Windows shutdown.exe with shutdown/reboot flags
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)shutdown\.exe$`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)(/s|/r|-s\s|-r\s)`) and
+          re.regex($e.target.process.command_line, `(?i)(/t\s*0|-t\s*0|/f|-f\s|/m\s|/m\\\\|\bnow\b)`)
+        )
+      )
+      or
+      // Branch 2: Windows shutdown.exe from suspicious parent
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)shutdown\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(/s|/r|-s\s|-r\s)`) and
+        re.regex($e.principal.process.file.full_path,
+          `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|regsvr32\.exe|rundll32\.exe|msiexec\.exe)$`)
+      )
+      or
+      // Branch 3: PowerShell Windows API abuse
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(ExitWindowsEx|InitiateSystemShutdown|InitiateSystemShutdownExW|NtRaiseHardError|ZwRaiseHardError|EWX_SHUTDOWN|EWX_REBOOT|EWX_POWEROFF|OptionShutdownSystem|SeShutdownPrivilege)`)
+      )
+      or
+      // Branch 4: Linux/macOS native shutdown utilities
+      (
+        re.regex($e.target.process.file.full_path, `(^|/)( shutdown|reboot|halt|poweroff)$`) and
+        not re.regex($e.target.process.file.full_path, `\.exe$`) and
+        (
+          $e.principal.asset.platform_software.platform_version = "LINUX" or
+          $e.principal.asset.platform_software.platform_version = "MAC"
+        )
+      )
+      or
+      // Branch 5: systemctl with destructive subcommands
+      (
+        re.regex($e.target.process.file.full_path, `(^|/)systemctl$`) and
+        re.regex($e.target.process.command_line, `(?i)(poweroff|reboot|halt|shutdown)`) and
+        not re.regex($e.target.process.file.full_path, `\.exe$`)
+      )
+    )
+
+  condition:
+    $e
+}

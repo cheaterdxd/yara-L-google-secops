@@ -1,0 +1,44 @@
+# T1110.001 — Password Guessing
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting password guessing by counting failed USER_LOGIN events (mapped from Windows Event IDs 4625, 4771, 4776 via UDM normalization) originating from the same source IP targeting the same host within a 10-minute sliding window.
+# Data Sources: Google Chronicle UDM - USER_LOGIN events, Windows Security Event Log ingested via Chronicle forwarder or BindPlane, Microsoft Active Directory / Windows Server events normalized to Chronicle UDM
+# Required Sources: UDM entity: USER_LOGIN (security_result.action = BLOCK)
+# False Positives: Legitimate users repeatedly failing multi-factor authentication challenges due to misconfigured authenticator apps or expired TOTP codes, generating blocked login events in rapid succession, Service accounts running automated ETL jobs or scheduled scripts with credentials that expired mid-execution, causing a burst of authentication failures at predictable job start times, IT operations teams running automated runbooks or configuration management tools (e.g., Ansible, Puppet) that include credential validation steps across multiple accounts during system provisioning
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1110.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1110_001_password_guessing {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects password guessing via high-volume Windows authentication failures (logon failure, Kerberos pre-auth, NTLM) from the same source IP to the same host within a 10-minute window."
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1110.001"
+    mitre_attack_technique_name = "Brute Force: Password Guessing"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1110/001/"
+    false_positives = "Service accounts with expired credentials, authorized password audit tools"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.security_result.action = "BLOCK"
+    $e.metadata.vendor_name = "Microsoft"
+    $e.principal.ip != ""
+    not $e.principal.ip = "127.0.0.1"
+    not $e.principal.ip = "::1"
+    $e.target.user.userid != ""
+    not $e.target.user.userid = "-"
+    not re.regex($e.target.user.userid, `(?i)^anonymous logon$`)
+    $source_ip = $e.principal.ip
+    $target_host = $e.target.hostname
+
+  match:
+    $source_ip, $target_host over 10m
+
+  condition:
+    #e >= 10
+}

@@ -1,0 +1,29 @@
+# T1565.002 — Transmitted Data Manipulation
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting netsh portproxy rule additions for traffic redirection.
+# Data Sources: Windows Process Events via Chronicle UDM
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Clipboard manager software (Ditto, ClipboardFusion, CopyQ) legitimately reads and writes clipboard data at high frequency and will trigger the ClipboardHijack pattern, Password managers (KeePass, 1Password, Bitwarden) that copy credentials to the clipboard will match clipboard access patterns, IT administrators configuring netsh portproxy for legitimate port forwarding, NAT traversal, or IPv4-to-IPv6 translation in lab or jump-host environments, Endpoint security vendors that install NDIS filter drivers for network traffic inspection (Palo Alto Cortex XDR, Symantec, CrowdStrike network filter components) will trigger the kernel driver installation pattern, VPN clients (Cisco AnyConnect, Palo Alto GlobalProtect) and remote desktop tools that install virtual network adapter drivers with Type=SERVICE_KERNEL_DRIVER, Automated UI testing frameworks (Playwright, Selenium, AutoIt) that programmatically interact with clipboard in CI/CD test environments
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1565.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule transmitted_data_manipulation {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects transmitted data manipulation via port proxy and driver manipulation (T1565.002)"
+    severity = "HIGH"
+    tactic = "TA0040"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($e.target.process.file.full_path, `(?i)netsh\.exe`) nocase
+    re.regex($e.target.process.command_line, `(?i)interface portproxy`) nocase
+    re.regex($e.target.process.command_line, `(?i)add v[46]tov[46]`) nocase
+
+  condition:
+    $e
+}

@@ -1,0 +1,62 @@
+# T1080 — Taint Shared Content
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1080 Taint Shared Content across three sub-technique variants: executable/script planting on network shares, LNK directory share pivot, and macro-enabled Office document injection (Gamaredon pattern).
+# Data Sources: Google Chronicle UDM, Windows Endpoint Telemetry via Chronicle forwarder, Sysmon via Chronicle ingestion
+# Required Sources: UDM events (FILE_CREATION, FILE_MODIFICATION)
+# False Positives: Legitimate software packaging workflows where build systems publish release artifacts (DLLs, EXEs) directly to a network share staging area, Authorized red team or penetration testing activity on internal network shares that mirrors this exact TTP, Helpdesk or sysadmin tooling (PSTools, remote admin kits) that drops .bat or .ps1 scripts to administrative shares for remote execution
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1080
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1080_taint_shared_content {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1080 Taint Shared Content — executables, scripts, LNK files, or macro-enabled Office documents written to UNC network paths or shared directory structures. Covers directory share pivot, binary planting, and Office macro injection patterns."
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1080"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION" or
+    $e.metadata.event_type = "FILE_MODIFICATION"
+
+    // UNC path or mapped share pattern
+    (
+      re.regex($e.target.file.full_path, `^\\\\`) or
+      re.regex($e.target.file.full_path, `(?i)[A-Za-z]:\\.*\\(share|shares|public|users|common|docs|dept|data)\\`)
+    )
+
+    // Suspicious file extension
+    re.regex($e.target.file.full_path, `(?i)\.(exe|dll|scr|bat|cmd|vbs|js|hta|ps1|lnk|docm|xlsm|pptm|doc|xls)$`)
+
+    // Exclude known-safe initiating processes
+    not re.regex($e.principal.process.file.full_path, `(?i)(MsMpEng\.exe|msiexec\.exe|TrustedInstaller\.exe|wuauclt\.exe|svchost\.exe)$`)
+
+    $e.principal.hostname = $hostname
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.target.file.full_path, `(?i)\.(exe|dll|scr)$`), 85,
+      if(re.regex($e.target.file.full_path, `(?i)\.(docm|xlsm|pptm)$`), 80,
+      if(re.regex($e.target.file.full_path, `(?i)\.lnk$`), 75, 65)))
+    )
+    $signal = if(
+      re.regex($e.target.file.full_path, `(?i)\.(docm|xlsm|pptm|doc|xls)$`), "MacroOfficeOnShare",
+      if(re.regex($e.target.file.full_path, `(?i)\.lnk$`), "LnkOnNetworkShare", "ExecOnNetworkShare")
+    )
+    $file_path = array_distinct($e.target.file.full_path)
+    $initiating_process = array_distinct($e.principal.process.file.full_path)
+    $user = array_distinct($e.principal.user.userid)
+
+  condition:
+    $e
+}

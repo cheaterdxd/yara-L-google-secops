@@ -1,0 +1,81 @@
+# T1485 — Data Destruction
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule for T1485 Data Destruction detection.
+# Data Sources: Google Chronicle SIEM, UDM Process Launch events, Windows Event Forwarding to Chronicle, Linux Auditd via Chronicle ingestion
+# Required Sources: UDM entity: PROCESS_LAUNCH
+# False Positives: Enterprise IT decommission workflows using sdelete64 or Eraser for DoD 5220.22-M compliant media sanitization, Backup and DR software managing VSS snapshot quotas through vssadmin resize shadowstorage, PowerShell-based deployment scripts that clean up installation directories using Remove-Item -Recurse -Force
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1485
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1485_data_destruction {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1485 Data Destruction including secure wipers, VSS destruction, boot config tampering, PowerShell overwrite, and mass deletion commands"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1485"
+    severity = "CRITICAL"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+
+    (
+      // Known secure deletion tools
+      re.regex($e.target.process.file.full_path, `(?i)(sdelete|sdelete64|eraser|wipe)\.exe$`)
+
+      // cipher /w free space overwrite
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\cipher\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)/w`)
+      )
+
+      // VSS and backup catalog destruction
+      or re.regex($e.target.process.command_line, `(?i)(delete shadows|shadowcopy delete|delete catalog|resize shadowstorage)`)
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\(vssadmin|wbadmin)\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)delete`)
+      )
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\wmic\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)shadowcopy`)
+        and re.regex($e.target.process.command_line, `(?i)delete`)
+      )
+
+      // Boot/recovery configuration destruction
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\bcdedit\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(/set|/deletevalue|/delete)`)
+      )
+
+      // Disk format
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\format\.exe$`)
+        and re.regex($e.target.process.command_line, `[A-Za-z]:`)
+      )
+
+      // Unix/Linux wipers
+      or re.regex($e.target.process.command_line, `(dd if=/dev/zero|dd if=/dev/urandom|shred -|wipe -rf)`)
+
+      // PowerShell data destruction
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(Clear-Content|WriteAllBytes|\[IO\.File\]|\[System\.IO\.File\]|Remove-Item.{0,30}-Recurse.{0,30}-Force|Remove-Item.{0,30}-Force.{0,30}-Recurse)`)
+      )
+
+      // Mass cmd.exe deletion
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)\\cmd\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)\bdel\b`)
+        and re.regex($e.target.process.command_line, `(?i)/s`)
+        and re.regex($e.target.process.command_line, `(?i)/f`)
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,41 @@
+# THREAT-CloudStorage-DataExfil — Data Exfiltration via Cloud Storage Services
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule matching PROCESS_LAUNCH UDM events to detect cloud storage data exfiltration.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM (Unified Data Model), Chronicle Forwarder (Windows Events), Google Cloud Endpoint Agent
+# Required Sources: UDM Events (PROCESS_LAUNCH)
+# False Positives: Authorized cloud-to-cloud migrations: IT teams using rclone under approved service accounts for scheduled data migrations — maintain a Chronicle reference list of authorized migration service account principal.user.userid values and add a NOT $e.principal.user.userid in %authorized_migration_accounts exclusion to the events block, Azure infrastructure automation: operations or platform engineering teams running AzCopy for Blob Storage management tasks — build a Chronicle reference list of corporate Azure storage account FQDNs and add NOT re.regex($e.target.process.command_line, %corp_storage_accounts) to suppress known-good invocations, Sanctioned enterprise file-sharing clients: Google Drive, OneDrive, or Dropbox for Business background sync processes running under standard user accounts — supplement the rule with a condition block counting events per principal.hostname over a time window and tuning on volume rather than presence to avoid suppressing legitimate single-event occurrences
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-CloudStorage-DataExfil
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule cloud_storage_data_exfiltration {
+  meta:
+    author = "df00tech"
+    description = "Detects data exfiltration via rclone, AzCopy, and cloud storage API abuse from scripting engines"
+    severity = "HIGH"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1567.002"
+    threat_actors = "Scattered Spider, Akira, Black Basta, Lazarus"
+    reference = "https://attack.mitre.org/techniques/T1567/002/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)rclone\.exe`)
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)azcopy\.exe`)
+        and re.regex($e.target.process.command_line, `(?i)(blob|file|queue)\.core\.windows\.net`)
+      )
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell|pwsh|curl|wscript|cscript)\.exe`)
+        and re.regex($e.target.process.command_line, `(?i)(mega\.nz|mega\.io|dropbox\.com|dropboxapi\.com|transfer\.sh|gofile\.io|box\.com|box\.net|drive\.google\.com|onedrive\.live\.com|sharefile\.com|sendspace\.com|filebin\.net|anonfiles\.com)`)
+      )
+    )
+    $hostname = $e.principal.hostname
+
+  condition:
+    $e
+}

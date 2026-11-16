@@ -1,0 +1,70 @@
+# T1558.001 — Golden Ticket
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Golden Ticket attacks via two UDM signal paths: (1) PROCESS_LAUNCH events matching Mimikatz kerberos::golden/silver/ptt or Rubeus golden/silver/ptt command-line patterns, and (2) Kerberos authentication events (normalized from Windows Event 4769) with RC4-HMAC encryption type 0x17 on successful TGS requests.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows Event Logs ingested via Chronicle forwarder, Endpoint Detection (EDR) via Chronicle integration, Chronicle SIEM Kerberos normalization
+# Required Sources: UDM events (Chronicle normalized), PROCESS_LAUNCH event type, USER_UNCATEGORIZED event type (for Windows Security Events), NETWORK_CONNECTION event type
+# False Positives: Environments not yet fully migrated to AES Kerberos encryption will produce high volumes of RC4 TGS requests — tune by excluding known service accounts and hosts configured for RC4 via GPO, Red team and penetration testing toolkits legitimately executing Mimikatz or Rubeus during authorized assessments — coordinate with red team scheduling and add suppression rules for known test host ranges, Some enterprise single-sign-on products and third-party authentication middleware request RC4 Kerberos tickets for compatibility — identify and baseline these before alerting
+# Confidence: medium  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1558.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule golden_ticket_detection {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects Golden Ticket attacks via Mimikatz/Rubeus tool execution and RC4-HMAC Kerberos TGS anomalies (T1558.001)"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1558.001"
+    reference = "https://attack.mitre.org/techniques/T1558/001/"
+    version = "1.0"
+
+  events:
+    // Signal A: Golden ticket tool execution — Mimikatz or Rubeus
+    (
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and $e1.principal.hostname = $hostname
+      and (
+        re.regex($e1.target.process.file.full_path, `(?i)(\\|/)mimikatz\.exe$`)
+        or re.regex($e1.target.process.file.full_path, `(?i)(\\|/)rubeus\.exe$`)
+        or re.regex($e1.target.process.command_line, `(?i)kerberos::golden`)
+        or re.regex($e1.target.process.command_line, `(?i)kerberos::silver`)
+        or re.regex($e1.target.process.command_line, `(?i)kerberos::ptt`)
+        or re.regex($e1.target.process.command_line, `(?i)kerberos::purge`)
+        or re.regex($e1.target.process.command_line, `(?i)sekurlsa::krbtgt`)
+        or re.regex($e1.target.process.command_line, `(?i)golden\s+/rc4:`)
+        or re.regex($e1.target.process.command_line, `(?i)golden\s+/aes256:`)
+        or re.regex($e1.target.process.command_line, `(?i)golden\s+/aes128:`)
+        or re.regex($e1.target.process.command_line, `(?i)ptt\s+/ticket:`)
+        or re.regex($e1.target.process.command_line, `(?i)asktgt\s+/user:`)
+      )
+    )
+    or
+    // Signal B: RC4-HMAC Kerberos TGS request (Event 4769 equivalent)
+    (
+      $e1.metadata.event_type = "NETWORK_CONNECTION"
+      and $e1.principal.hostname = $hostname
+      and $e1.network.application_protocol = "KERBEROS"
+      and $e1.network.session_id != ""
+      and re.regex($e1.network.tls.cipher, `(?i)rc4`)
+    )
+    or
+    // Signal B (UDM auth event path for Chronicle-normalized Kerberos)
+    (
+      $e1.metadata.event_type = "USER_UNCATEGORIZED"
+      and $e1.principal.hostname = $hostname
+      and $e1.metadata.product_event_type = "4769"
+      and $e1.extensions.auth.mechanism = "KERBEROS"
+      and $e1.network.application_protocol = "KERBEROS"
+      // RC4-HMAC indicated via metadata label
+      and "0x17" in $e1.additional.fields["TicketEncryptionType"]
+      and not re.regex($e1.target.user.userid, `.*\$$`)
+      and $e1.target.user.userid != "krbtgt"
+    )
+
+  condition:
+    $e1
+}

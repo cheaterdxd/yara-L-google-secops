@@ -1,0 +1,40 @@
+repository,commit,rule_file_count,license_status,decision,reason
+Harshavardhanmalla-Labs/google-secops-yaral-detection-playbook,b78fbfe664232d61d9f082c2b5453417f407b353,16,NOASSERTION,link_only,No declared license in reviewed checkout
+The-Computer-Cowboy/Google-Chronicle,7112603674ba7e1b56f458e334f75c4d68d56702,12,NOASSERTION,link_only,No declared license in reviewed checkout
+kelvinodarikpe88/detection-engineering,76be9359b078e998d8f8052956d033c06bd66a1b,2,NOASSERTION,link_only,No declared license in reviewed checkout
+Contrast-Security-OSS/google-security-operations,71b7a25f8b4c5ed27b9edb7178f61d87f0f852d7,5,NOASSERTION,link_only,No declared license in reviewed checkout
+shahoahmed/clickfix-detection-portability-lab,4a736219724224fc07d0988c1edc5c68670afff6,2,NOASSERTION,link_only,Rechecked tree confirms two YARA-L files under rules/yara-l but no declared license; no rule text redistributed and simulation script not run
+ELLIO-Technology/ellio-secops-content-pack,8d4bc1d62863573a68cd138af21dda77e8f3be29,6,NOASSERTION,link_only,No declared license in reviewed checkout
+sanusam17/Yara-L-C-Rules,dd34d4223d462494159c4ca3d0051dab4be2a1e9,1,NOASSERTION,link_only,No declared license in reviewed checkout
+warleirf/google-secops-rules,68db182408b44021fdabd6f65dc83baec3a9bb15,13,NOASSERTION,link_only,No declared license in reviewed checkout
+giometro43/YARAL_Rules,8f5ba9e407cf77048f0f16f7942389ac4e55b870,1,NOASSERTION,link_only,No declared license in reviewed checkout
+Dishwishy/secops-rules-left-join-examples-2026,be230f088adccc67e30ef645adefb88f0f7a0987,3,NOASSERTION,link_only,No declared license in reviewed checkout
+Darrenswift/secops,291fd2d26758c95a97fb6a994713d6a821422f3a,3,NOASSERTION,link_only,No declared license in reviewed checkout; contains three GCP YARA-L samples
+googleSandy/secops-skills,eac7433e5be60713f5d7ad67b7f639e67c22ec93,4,NOASSERTION,link_only,No declared license in reviewed checkout
+YanGuilherme01/detection-lab,71aa0075308412f221cedb2bf7aaa057dc4e5da0,10,NOASSERTION,link_only,No declared license; upstream marks rules uncompiled and unvalidated
+yagneswar-cyber/google-chronicle-yaral-rules,d2a4e7aad1a3005712442be254a7292edacf095f,1,NOASSERTION,link_only,No declared license in reviewed checkout
+mtdotexe/GoogleSecOpsYARAL,0d852ffd82c2834cea784ca59e553ef369d6e71c,14,NOASSERTION,link_only,README only labels MIT without license text; .yar examples appear structurally unlike YARA-L 2.0
+Jotatoe/SecOps-YARA-L-Rules,0079f7f594962cf3e83785540e656f2a73fa0188,64,NOASSERTION,link_only,64 extensionless rule-like samples; no declared license in checkout
+mani-work-79/Yara.l-Usecase-detectionRules,7fabc7453aeb193c1bc6c535ac874910da1b0f08,3,NOASSERTION,link_only,3 extensionless YARA-L-like samples; no declared license in checkout
+mtdotexe/GoogleSecOpsYARAL,0d852ffd82c2834cea784ca59e553ef369d6e71c,14,NOASSERTION,link_only,README only labels MIT without license text; .yar examples appear structurally unlike YARA-L 2.0
+Heavy1981/secops-lab-portfolio,1df0c83959252b4899c4a06baec9a2144c6c4c3f,4,NOASSERTION,link_only,No declared license in reviewed checkout
+Greimore1/Google-SecOps-Yara-L-Detection-Rules,e907de1e1144cb6aa412a13968d9e212fff6627e,9,NOASSERTION,excluded_format,Extensionless samples use filter()/== pattern not validated as YARA-L
+miguelcastu/GoogleSecOps-Lab,6fbc1623bb8e54d7361c7d4a69865076c7134979,19,NOASSERTION,link_only,No declared license in reviewed checkout; lab contains synthetic data and infrastructure content not copied
+slash-31/google-secops-pov-kit,bde4dc5cbd27e2b6c8cb9aa303251117243af86c,2,NOASSERTION,link_only,No declared license in reviewed checkout
+Laeeq14/Agentic-CTI,db654ab6b2cd6683c1067df2fbf077f312878065,0,NOASSERTION,link_only,Reviewed public tree contains YARA-L generation/validation software but no standalone detection-rule files; no declared license in checkout
+sifatnotes/gcp-professional-security-operations-engineer-study-guide,d9a6b0cb998caf3667b40d13c849b5f14ebffde9,0,NOASSERTION,link_only,Reviewed public tree contains only README.md with study-guide text; no standalone rule files or declared license
+gauthamrajendranp/YARA-L-detection-rules-Google-Chronicle,b0632a6d65679215db5ba0f43e1fb56d102273b5,46,NOASSERTION,link_only,46 extensionless rule-like files including GCP examples; repository API reports no license and tree has no LICENSE, so no redistribution
+AttackIQ/pySigma-backend-secops,15542480c78509cb10c767a6aff921169d39211a,0,LGPL-3.0,tooling_only,Conversion backend/schema/tests only; no independent YARA-L detection corpus
+seanthegeek/pygments-lexer-yara-l,b426e5da3712cd7fbc4c38fa4b8af45e3ddbc1c4,0,MIT,tooling_only,Syntax-highlighting lexer only; no detection rule files
+gromerosec/google-secops-rule-export,1d1187c138a5aa9ecbbc088cf1e82bc12cc685be,0,MIT,tooling_only,Read-only tenant export utility only; no public rule corpus and no tenant access used
+sp4ir/detection-codex,afd4fed7db254fd847a6c9b2fcec6b8e004153fa,0,NOASSERTION,link_only,Chronicle/YARA-L documentation and detection factory only; no standalone .yaral corpus confirmed and no declared license
+dandye/googleSandy-secops-skills,72503a21482c1c32062af733c651b87f0c8e539b,0,NOASSERTION,link_only,Forked SecOps skill documentation only; no standalone detection rules and no declared license
+sifatnotes/Google-Cloud-Professional-Security-Operations-Engineer-Study-Guide-Notes-2026-,2461b9b719564a4f5f82d6f5bae0eb65fbfe7bf2,0,NOASSERTION,link_only,README-only study guide mentioning YARA-L; no standalone rule files or declared license
+abhiiibabariya-dev/sigma-rule-converter,ce24e2538ea7d07ff9e8c2b56b8c59453aa285e9,0,MIT,tooling_only,MIT Sigma-to-SIEM converter and sample Sigma rules; generated Chronicle output is code behavior, not a standalone public YARA-L corpus
+ajaynyayapathi/ATR-to-Yara-L-Converter,919619ce152df52361c337f3346e228af7e10123,0,MIT,tooling_only,MIT ATR conversion tool and test fixtures; no standalone generated YARA-L rules snapshot
+efi-k/yara-l-resources,4a17842f987ff846a4aa56653cd517ce2e6f3a18,0,NOASSERTION,link_only,Resource URL list only; no standalone rule files and no declared license
+rapture2367/YARA-L-STUDIO,unknown,0,NOASSERTION,tooling_only,IDE/studio tooling candidate; no declared license verified and no rule corpus snapshot
+SIMKRA242/YARA100days,c8ba0a115914550af5a5e5b23e5a4a5761dc6fdd,2,NOASSERTION,link_only,Two extensionless YARA-L-looking learning files but no declared license; no rule text redistributed
+MatheusDamacena/secops-quest,b861b60b81d4cb96d7af41306474ed2fb1181aba,0,NOASSERTION,tooling_only,Educational app for SecOps/YARA-L with no standalone rule files and no declared license
+kelvinodarikpe88/cti-threat-hunting-simulation,9815b3fc3282f4b21977ae7d1f4e8b6fa5f176cd,1,NOASSERTION,link_only,One rules/yara_l/sample_detection.yaral file but no declared license; no rule text redistributed
+kiran-puvvada/chronicle-pulse-secops-workbench,704703703d9e8786983ba211c18c3ad9416fcd24,8,NOASSERTION,link_only,Eight secops-rules/*.yaral files but no declared license; no rule text or threat-intel data redistributed

@@ -1,0 +1,71 @@
+# T1057 — Process Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting T1057 Process Discovery via tasklist.exe, pslist.exe, wmic process queries, PowerShell Get-Process/Get-WmiObject Win32_Process, and ps spawned from scripting language interpreters.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM), Windows Event Log ingested via Chronicle forwarder, Sysmon via Chronicle Windows sensor, CrowdStrike Falcon via Chronicle integration
+# Required Sources: UDM events (PROCESS_LAUNCH event type)
+# False Positives: IT asset management platforms performing scheduled process inventory collection across the enterprise, Vulnerability scanners that spawn PowerShell or wmic to enumerate running processes as part of authenticated scans, Container orchestration health probes or sidecar agents that regularly enumerate host processes for resource accounting
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1057
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1057_process_discovery {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1057 Process Discovery via tasklist, wmic process enumeration, PowerShell Get-Process, and ps spawned from scripting interpreters"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1057"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1057/"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(tasklist\.exe|pslist\.exe|proclist\.exe|tlist\.exe)$`)
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)wmic\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(process\s+get|process\s+list|process\s+where|win32_process)`)
+      )
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`)
+        and re.regex($e.target.process.command_line, `(?i)(get-process|get-wmiobject\s+win32_process|get-ciminstance\s+win32_process|\[system\.diagnostics\.process\]::getprocesses|gps\s)`)
+      )
+      or (
+        $e.target.process.file.full_path = "/usr/bin/ps"
+        and re.regex($e.principal.process.file.full_path, `(?i)(bash|sh|zsh|python3?|perl|ruby)`)
+      )
+    )
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(
+        re.regex($e.principal.process.file.full_path,
+          `(?i)(wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|msbuild\.exe|installutil\.exe|certutil\.exe|bitsadmin\.exe)`
+        ), 50, 10
+      )
+    )
+    $suspicious_parent = max(
+      if(
+        re.regex($e.principal.process.file.full_path,
+          `(?i)(wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|msbuild\.exe|installutil\.exe|certutil\.exe|bitsadmin\.exe)`
+        ), 1, 0
+      )
+    )
+    $verbose_enum = max(
+      if(
+        re.regex($e.target.process.command_line, `(?i)(\/v\b|\/fo|\/svc|executablepath|commandline)`),
+        1, 0
+      )
+    )
+    $discovery_count = count_distinct($e.target.process.file.full_path)
+
+  condition:
+    $e
+}

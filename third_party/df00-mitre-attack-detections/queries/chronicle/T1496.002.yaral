@@ -1,0 +1,49 @@
+# T1496.002 — Bandwidth Hijacking
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle SIEM detecting proxyware agent binary execution, DNS queries to proxyware control infrastructure, and direct network connections to known bandwidth-hijacking service domains using the Unified Data Model (UDM).
+# Data Sources: Google Chronicle SIEM, Chronicle Forwarder (endpoint telemetry), DNS event logs via Chronicle ingestion, Network flow telemetry
+# Required Sources: PROCESS_LAUNCH UDM events, NETWORK_DNS UDM events, NETWORK_CONNECTION UDM events
+# False Positives: Authorized bandwidth-sharing or distributed CDN programs explicitly approved by IT and deployed through managed software channels on designated assets, Threat intelligence teams using Chronicle-monitored systems to dynamically analyze proxyware samples with documented change control approval, Penetration testers simulating proxyware installation as part of a scoped red team engagement with prior written authorization
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1496.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1496_002_bandwidth_hijacking_proxyware {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects bandwidth hijacking via proxyware agent execution, DNS queries, or network connections to known proxyware service infrastructure (T1496.002)"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1496.002"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    version = "1.0"
+
+  events:
+    (
+      $proc.metadata.event_type = "PROCESS_LAUNCH"
+      re.regex($proc.target.process.file.full_path,
+        `(?i)(honeygain(client)?\.exe|iproyal[_-]desktop\.exe|pawns\.exe|peer2profit\.exe|p2p-node\.exe|packetstream\.exe|psnode\.exe|traffmonetizer\.exe|traffmain\.exe|earnapp\.exe|repocket\.exe|bitping\.exe|mysterium\.exe|myst\.exe)$`
+      )
+    )
+    or
+    (
+      $dns.metadata.event_type = "NETWORK_DNS"
+      re.regex($dns.network.dns.questions.name,
+        `(?i)(honeygain\.com|cdn\.honeygain|api\.honeygain|iproyal\.com|pawns\.app|peer2profit\.com|packetstream\.io|traffmonetizer\.com|earnapp\.com|repocket\.co|bitping\.com|mysterium\.network)`
+      )
+    )
+    or
+    (
+      $net.metadata.event_type = "NETWORK_CONNECTION"
+      re.regex($net.target.hostname,
+        `(?i)(honeygain\.com|iproyal\.com|pawns\.app|peer2profit\.com|packetstream\.io|traffmonetizer\.com|earnapp\.com|repocket\.co|bitping\.com|mysterium\.network)`
+      )
+    )
+
+  condition:
+    $proc or $dns or $net
+}

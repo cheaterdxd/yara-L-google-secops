@@ -1,0 +1,40 @@
+# T1678 — Delay Execution
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for detecting Delay Execution (T1678).
+# Data Sources: Windows EDR, CrowdStrike Falcon, Carbon Black
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Network diagnostic scripts legitimately using ping with high iteration counts for connectivity monitoring, IT automation tools and deployment scripts using sleep/timeout to wait for service readiness or restart completion, PowerShell-based health check scripts polling for application startup with Start-Sleep loops
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1678
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detection_t1678 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects Delay Execution - T1678"
+    severity = "HIGH"
+    mitre_attack = "T1678"
+    reference = "https://attack.mitre.org/techniques/T1678/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.target.process.file.full_path = $process_path
+    $e.target.process.command_line = $cmdline
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(powershell|cmd|wscript|cscript|mshta|rundll32)\.exe$`) and
+      (
+        re.regex($e.target.process.command_line, `(?i)-enc(odedcommand)?`) or
+        re.regex($e.target.process.command_line, `(?i)-bypass`) or
+        re.regex($e.target.process.command_line, `(?i)(invoke-expression|iex\s)`) or
+        re.regex($e.target.process.command_line, `(?i)http://`)
+      )
+    )
+    not re.regex($e.principal.process.file.full_path, `(?i)(trustedinstaller|msiexec|svchost)`)
+
+  condition:
+    $e
+}

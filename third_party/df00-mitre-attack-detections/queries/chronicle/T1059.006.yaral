@@ -1,0 +1,39 @@
+# T1059.006 — Python
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting suspicious Python interpreter invocations for T1059.006.
+# Data Sources: Google Chronicle UDM PROCESS_LAUNCH events, Endpoint telemetry forwarded to Chronicle via forwarders (Windows Sysmon, CrowdStrike, Carbon Black), Linux auditd process execution events normalized to UDM
+# Required Sources: UDM events (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: Legitimate DevOps automation using Ansible, SaltStack, or Fabric that execute subprocess calls or network requests as part of infrastructure management, Data engineering pipelines using Python to download and process datasets using urllib or requests (ETL jobs, ML training workflows), Application packaging workflows in CI/CD environments using PyInstaller or Nuitka to compile Python apps into distributable binaries
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.006
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1059_006_python_suspicious_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious Python interpreter execution patterns associated with MITRE ATT&CK T1059.006 including reverse shells, download-and-execute, subprocess abuse, and dynamic code execution."
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.006"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+    created = "2026-04-17"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(python|python3|python3\.exe|python\.exe|pythonw\.exe)$/
+    (
+      $e.target.process.command_line = /(?i)(socket\.socket|pty\.spawn|\/bin\/sh|\/bin\/bash|reverse_shell|reverse_tcp)/ or
+      $e.target.process.command_line = /(?i)(urllib|requests\.get|requests\.post|http\.client)/ or
+      $e.target.process.command_line = /(?i)(subprocess\.(call|popen|run)|os\.system|os\.popen)/ or
+      $e.target.process.command_line = /(?i)(exec\(|eval\(|compile\(|__import__)/ or
+      $e.target.process.command_line = /(?i)(base64\.b64decode|codecs\.decode)/ or
+      $e.target.process.command_line = /(?i)(pyinstaller|py2exe|nuitka)/
+    )
+
+  condition:
+    $e
+}

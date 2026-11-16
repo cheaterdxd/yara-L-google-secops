@@ -1,0 +1,36 @@
+# T1568.001 — Fast Flux DNS
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting fast flux DNS by counting distinct IP resolutions per domain per hour.
+# Data Sources: DNS Events via Chronicle UDM
+# Required Sources: NETWORK_DNS
+# False Positives: Content Delivery Networks (Cloudflare, Akamai, AWS CloudFront, Fastly, Azure CDN) legitimately return many different IPs via anycast geo-routing — filter by known CDN domain suffixes or IP ranges, Global load-balanced SaaS services (Microsoft 365, Google Workspace, Zoom, Salesforce) return different IPs per geographic region — allowlist by domain suffix, Active/passive DNS failover configurations tested during disaster recovery drills — coordinate with network operations for change window exclusions, Internal DNS round-robin for on-premises load-balanced applications with multiple backend nodes — document and allowlist by internal domain name, Security research sinkholes — multiple decommissioned botnet C2 domains may resolve to sinkhole IPs operated by different vendors, appearing as high IP diversity
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1568.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule fast_flux_dns {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects fast flux DNS behavior with high IP rotation (T1568.001)"
+    severity = "HIGH"
+    tactic = "TA0011"
+
+  events:
+    $e.metadata.event_type = "NETWORK_DNS"
+    $e.network.dns.answers.type = "A"
+    not re.regex($e.network.dns.questions.name, `(?i)(akamaiedge|cloudflare|fastly|amazonaws|azure|cloudfront|akadns)`) nocase
+    $domain = $e.network.dns.questions.name
+    $ip = $e.network.dns.answers.data
+
+  match:
+    $domain over 1h
+
+  outcome:
+    $unique_ips = count_distinct($ip)
+
+  condition:
+    $unique_ips >= 5
+}

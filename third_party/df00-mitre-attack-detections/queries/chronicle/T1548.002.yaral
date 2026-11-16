@@ -1,0 +1,84 @@
+# T1548.002 — Bypass User Account Control
+# Tactic: Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Four Chronicle YARA-L 2.0 rules covering the full UAC bypass detection surface: (1) auto-elevating binaries spawning unexpected children, (2) HKCU registry modification at known UAC bypass key paths, (3) CMSTPLUA COM elevation via cmstp.exe or dllhost.exe with CLSID, and (4) high-severity detection of cmd/PowerShell shells spawned directly from UAC bypass binaries.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs via Chronicle Forwarder, Sysmon via Chronicle
+# Required Sources: UDM Events — process_launch, UDM Events — registry_modification
+# False Positives: Windows Defender or other AV products that use elevated COM objects (dllhost.exe with elevated CLSID) for quarantine or remediation operations triggered from system processes, Enterprise GPO-based configurations that write to Software\Classes registry hives including ms-settings paths when applying policy during domain-joined workstation startup, Sysinternals or IT tooling (e.g., Autoruns, Process Monitor) that enumerate or touch runas shell handler registry keys as part of system inspection
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1548.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule uac_bypass_auto_elevate_child_spawn {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects UAC bypass via auto-elevating binary spawning unexpected child processes"
+    mitre_attack_technique = "T1548.002"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.process.file.full_path = /(?i)(eventvwr|fodhelper|sdclt|cmstp|migwiz|wsreset|computerdefaults|slui|pkgmgr|sysprep|osk|msconfig|mmc|eudcedit|charmap|colorcpl)\.exe$/
+    not $proc.target.process.file.full_path = /(?i)(conhost|WerFault|dwm)\.exe$/
+
+  condition:
+    $proc
+}
+
+rule uac_bypass_registry_hkcu {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects UAC bypass via HKCU registry modification at known bypass paths"
+    mitre_attack_technique = "T1548.002"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $reg.metadata.event_type = "REGISTRY_MODIFICATION"
+    $reg.target.registry.registry_key = /(?i)(HKCU|HKEY_CURRENT_USER).*(ms-settings|mscfile|exefile\\shell\\runas|App\.Paths.*control\.exe)/
+
+  condition:
+    $reg
+}
+
+rule uac_bypass_cmstplua_com {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects CMSTPLUA COM interface abuse for UAC bypass elevation"
+    mitre_attack_technique = "T1548.002"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+
+  events:
+    $com.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $com.target.process.file.full_path = /(?i)\\cmstp\.exe$/ or
+      (
+        $com.target.process.file.full_path = /(?i)\\dllhost\.exe$/ and
+        $com.target.process.command_line = /3E5FC7F9-9A51-4367-9063-A120244FBEC7/
+      )
+    )
+
+  condition:
+    $com
+}
+
+rule uac_bypass_shell_spawn {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects UAC bypass resulting in cmd or powershell spawned by known bypass binaries"
+    mitre_attack_technique = "T1548.002"
+    severity = "CRITICAL"
+    confidence = "HIGH"
+
+  events:
+    $shell.metadata.event_type = "PROCESS_LAUNCH"
+    $shell.target.process.file.full_path = /(?i)(powershell|cmd)\.exe$/
+    $shell.principal.process.file.full_path = /(?i)(eventvwr|fodhelper|sdclt)\.exe$/
+
+  condition:
+    $shell
+}

@@ -1,0 +1,30 @@
+# T1595 — Active Scanning
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule for Active Scanning (T1595).
+# Data Sources: Google Chronicle SIEM, Chronicle UDM
+# Required Sources: NETWORK_CONNECTION, NETWORK_FLOW
+# False Positives: Legitimate external vulnerability scanners operated by authorized third-party security vendors (e.g., Qualys, Tenable, Rapid7) running scheduled assessments — coordinate with security team to whitelist known scanner IPs, Cloud provider health checks, CDN edge probes, and load balancer connectivity tests from cloud service IP ranges (AWS, Azure, Cloudflare) that generate denied traffic to closed ports, Internet background radiation and automated internet-wide scanners from academic research institutions such as Shodan, Censys, and university security research groups hitting exposed public IPs
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1595
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1595_active_scanning {
+  meta:
+    author = "df00tech"
+    description = "Detects active scanning activity from external source IPs"
+    mitre_attack_tactic = "TA0043"
+    mitre_attack_technique = "T1595"
+    confidence = "medium"
+    severity = "medium"
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.security_result.action = "BLOCK"
+    not re.regex($e.principal.ip, `^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.)`)
+  match:
+    $e.principal.ip over 5m
+  condition:
+    #e > 50
+}

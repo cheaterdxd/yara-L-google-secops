@@ -1,0 +1,78 @@
+# T1213.005 — Messaging Applications
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting bulk messaging application data mining (T1213.005).
+# Data Sources: Google Chronicle with Microsoft 365 log ingestion, Chronicle Slack Enterprise log parser, Chronicle Google Workspace ingestion (native), Chronicle UDM normalized cloud events
+# Required Sources: UDM events (USER_RESOURCE_ACCESS type)
+# False Positives: Paralegal or compliance staff running Microsoft Purview eDiscovery searches tied to legal holds, which will generate multiple export operation events in short succession, Slack workspace administrators using the Slack Export feature for GDPR or data portability compliance requests from employees, Security vendors or UEBA platforms that use service account API access to continuously ingest Teams/Slack messages for behavioral analysis baseline building
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1213.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1213_005_messaging_app_data_mining {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects bulk or export-based data mining of messaging applications (Teams, Slack, Google Chat) indicating adversarial credential or sensitive data harvesting (T1213.005)"
+    mitre_attack_tactic = "Collection"
+    mitre_attack_technique = "T1213.005"
+    severity = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1213/005/"
+    created = "2026-04-19"
+
+  events:
+    // Match cloud application audit events for messaging platforms
+    $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+    $e.metadata.product_name in (
+      "Microsoft Teams",
+      "Microsoft Office 365",
+      "Slack",
+      "Google Chat",
+      "Google Workspace",
+      "Webex"
+    )
+    // Match bulk read, search, download, or export operations
+    (
+      $e.metadata.event_subtype in (
+        "FileDownloaded", "FilePreviewed", "FileAccessed",
+        "MessageRead", "ChannelRead", "SearchPerformed",
+        "ItemShared", "file_downloaded", "search_performed",
+        "channel_joined", "message_channel_export"
+      )
+      or re.regex(
+        $e.network.application_protocol,
+        `(?i)(export|contentsearch|searchexported|bulkdownload|searchcreated)`
+      )
+      or re.regex(
+        $e.security_result.summary,
+        `(?i)(export|content.search|bulk.download|search.created|edisc)`
+      )
+    )
+    // Bind user principal
+    $user = $e.principal.user.userid
+    $app = $e.metadata.product_name
+    $src_ip = $e.principal.ip
+
+  match:
+    $user, $app over 1h
+
+  outcome:
+    $event_count = count_distinct($e.metadata.id)
+    $unique_ops = count_distinct($e.metadata.event_subtype)
+    $unique_src_ips = count_distinct($e.principal.ip)
+    $export_count = sum(
+      if(
+        re.regex($e.metadata.event_subtype, `(?i)(export|contentsearch|searchexported|bulkdownload|searchcreated)`),
+        1, 0
+      )
+    )
+    $risk_score = if($export_count >= 1 and $event_count > 100, 90,
+      if($export_count >= 1, 70,
+      if($event_count > 200, 65,
+      if($event_count > 50, 50, 30))))
+
+  condition:
+    #e > 50 or $export_count >= 1
+}

@@ -1,0 +1,47 @@
+# T1090.004 — Domain Fronting
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule for domain fronting (T1090.004), comparing the TLS SNI field (network.tls.client.server_name) against the HTTP Host header value (target.hostname) in NETWORK_HTTP UDM events.
+# Data Sources: Google Chronicle UDM — NETWORK_HTTP events from proxy/firewall log feeds, Web proxy logs ingested via Chronicle forwarder with TLS+HTTP parser (Blue Coat, Zscaler, Squid), Palo Alto Networks URL Filtering and Threat logs forwarded to Chronicle with TLS inspection fields, Zeek network sensor logs ingested via Chronicle with ssl.log + http.log correlation
+# Required Sources: Chronicle UDM event type: NETWORK_HTTP, UDM fields required: network.tls.client.server_name, target.hostname, network.application_protocol
+# False Positives: Google Cloud CDN, Firebase Hosting, and Google APIs use infrastructure where TLS SNI may reference a googleapis.com or googleusercontent.com edge domain while the HTTP Host header reflects a customer-specific bucket or API endpoint — high-volume false positives expected from Google Workspace and GCP workloads, Microsoft Azure Front Door serves enterprise tenants with wildcard TLS certificates presenting azurefd.net or azureedge.net in the SNI while routing requests to customer Origin Host headers — expected for any org with Azure Front Door-fronted applications, Akamai SureRoute and NetSession technologies used by software vendors (Adobe, Microsoft, Autodesk) for large file delivery legitimately produce SNI/Host mismatches as part of Akamai's internal CDN routing between edge and parent cache nodes
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1090.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule domain_fronting_sni_host_mismatch_t1090_004 {
+  meta:
+    author          = "Detection Engineering"
+    description     = "Detects domain fronting (T1090.004) via mismatch between the TLS SNI extension and the HTTP Host header in HTTPS connections traversing known CDN providers. Technique used by APT29 and tooling including Cobalt Strike, Mythic, and SMOKEDHAM to hide C2 traffic behind legitimate CDN certificate chains."
+    mitre_attack_tactic    = "Command and Control"
+    mitre_attack_technique = "T1090.004"
+    severity        = "HIGH"
+    confidence      = "MEDIUM"
+    platforms       = "Windows, Linux, macOS"
+    data_sources    = "Network proxy logs, TLS inspection logs forwarded to Chronicle"
+    version         = "1.0"
+
+  events:
+    $e.metadata.event_type = "NETWORK_HTTP"
+    $e.network.application_protocol = "HTTPS"
+
+    // Bind SNI and HTTP Host to variables for comparison
+    $sni  = $e.network.tls.client.server_name
+    $host = $e.target.hostname
+
+    // Both fields must be populated and differ from each other
+    $sni  != ""
+    $host != ""
+    $sni  != $host
+
+    // At least one of the two must be a known CDN domain
+    (
+      re.regex($sni,  `(?i)(azureedge\.net|cloudfront\.net|akamaiedge\.net|fastly\.net|cloudflare\.com|msecnd\.net|azurefd\.net|amazonaws\.com|googleusercontent\.com)`) or
+      re.regex($host, `(?i)(azureedge\.net|cloudfront\.net|akamaiedge\.net|fastly\.net|cloudflare\.com|msecnd\.net|azurefd\.net|amazonaws\.com|googleusercontent\.com)`)
+    )
+
+  condition:
+    $e
+}

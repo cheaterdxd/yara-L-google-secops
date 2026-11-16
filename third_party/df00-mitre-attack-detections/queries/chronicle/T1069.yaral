@@ -1,0 +1,70 @@
+# T1069 — Permission Groups Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting MITRE T1069 Permission Groups Discovery.
+# Data Sources: Google Chronicle SIEM, Chronicle Forwarder with Sysmon/Windows Security, Chronicle UDM normalized process events
+# Required Sources: UDM events (PROCESS_LAUNCH type)
+# False Positives: IT administrators using Get-ADGroup or net group commands from privileged admin workstations during routine identity lifecycle management tasks, Group Policy troubleshooting workflows where helpdesk runs gpresult /r or whoami /groups to diagnose policy application failures, Authorized red team operators or internal penetration testers running BloodHound/SharpHound under a defined rules-of-engagement scope, Configuration management and deployment automation tools querying group membership to validate role-based access control configuration
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1069
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule mitre_t1069_permission_groups_discovery {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects MITRE ATT&CK T1069 Permission Groups Discovery via net.exe group enumeration, PowerShell AD/local group cmdlets, dsquery/dsget, whoami with group flags, gpresult, and BloodHound/SharpHound collectors"
+    mitre_attack_tactic = "Discovery"
+    mitre_attack_technique = "T1069"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1069/"
+    severity = "MEDIUM"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-18"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+    $e.principal.user.userid = $user
+    $e.target.process.command_line = $cmdline
+    $e.target.process.file.full_path = $proc_path
+
+    (
+      // net.exe / net1.exe group enumeration
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)net1?\.exe$`)
+        and (
+          re.regex($e.target.process.command_line, `(?i)\bgroup\b`)
+          or re.regex($e.target.process.command_line, `(?i)\blocalgroup\b`)
+        )
+      )
+      or
+      // PowerShell AD/local group cmdlets
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)(powershell|pwsh)\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(Get-ADGroup|Get-ADGroupMember|Get-LocalGroup|Get-LocalGroupMember|Get-ADPrincipalGroupMembership)`)
+      )
+      or
+      // dsquery / dsget LDAP group queries
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)(dsquery|dsget)\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)\bgroup\b`)
+      )
+      or
+      // whoami with group/privilege flags
+      (
+        re.regex($e.target.process.file.full_path, `(?i)(\\|/)whoami\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(/groups|/all|/priv)`)
+      )
+      or
+      // gpresult — Group Policy result showing group memberships
+      re.regex($e.target.process.file.full_path, `(?i)(\\|/)gpresult\.exe$`)
+      or
+      // BloodHound / SharpHound collection
+      re.regex($e.target.process.command_line, `(?i)(SharpHound|BloodHound|-CollectionMethod|--CollectionMethods)`)
+    )
+
+  condition:
+    $e
+}

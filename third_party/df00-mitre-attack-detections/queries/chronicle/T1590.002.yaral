@@ -1,0 +1,115 @@
+# T1590.002 — DNS
+# Tactic: Reconnaissance
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three Chronicle YARA-L 2.0 rules for T1590.002 DNS reconnaissance targeting the Google Chronicle Detection Engine.
+# Data Sources: Google Chronicle UDM NETWORK_DNS events (from DNS server log ingestion parsers), Google Chronicle UDM PROCESS_LAUNCH events (from CrowdStrike Falcon, Carbon Black, SentinelOne, or Defender forwarded to Chronicle), Chronicle ingestion parsers for Microsoft DNS, BIND, Windows Event Log, and Sysmon
+# Required Sources: UDM events with metadata.event_type = NETWORK_DNS, UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Authorized DNS secondary name servers performing AXFR replication from hosted or cloud-segment IPs not covered by the RFC1918 CIDR exclusions in Rules 1 and 3, Security research or red team endpoints enrolled in Chronicle telemetry that run amass, subfinder, or similar tools during authorized assessments against the organization's own infrastructure, DNS-based monitoring and IPAM solutions (Infoblox, BlueCat, NetBox) generating bulk NS/MX/TXT/SOA queries above the Rule 3 threshold during automated inventory reconciliation, CI/CD pipeline agents querying multiple DNS record types for infrastructure validation during deployments, exceeding the 10-minute window threshold in Rule 3
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1590.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+// Rule 1: External DNS Zone Transfer Attempt (AXFR/IXFR/ANY from non-RFC1918 sources)
+rule t1590_002_dns_zone_transfer_external {
+  meta:
+    author = "Detection Engineer"
+    description = "Detects AXFR, IXFR, or ANY DNS queries arriving from non-RFC1918 source IPs"
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1590.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "Authorized secondary DNS replication from hosted or DMZ name servers"
+
+  events:
+    $e.metadata.event_type = "NETWORK_DNS"
+    (
+      $e.network.dns.questions.type = "AXFR" or
+      $e.network.dns.questions.type = "IXFR" or
+      $e.network.dns.questions.type = "ANY"
+    )
+    not net.ip_in_range_cidr($e.principal.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($e.principal.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($e.principal.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($e.principal.ip, "127.0.0.0/8")
+    not net.ip_in_range_cidr($e.principal.ip, "169.254.0.0/16")
+
+  condition:
+    $e
+}
+
+// Rule 2: DNS OSINT Tool or Built-in Utility Abused for Enumeration on Endpoint
+rule t1590_002_dns_osint_tool_execution {
+  meta:
+    author = "Detection Engineer"
+    description = "Detects execution of DNS reconnaissance tools or abuse of nslookup/dig with AXFR/enumeration arguments"
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1590.002"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "Authorized red team operators, security engineers running attack surface tooling"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.principal.process.file.full_path,
+        `(?i)(dnsrecon|dnsx|subfinder|amass|fierce|dnsmap|dnsenum|gobuster|dnstwist|dnswalk|shuffledns|puredns|altdns|knockpy)(\.py|\.pl)?$`)
+      or
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)python[23]?(\.exe)?$`) and
+        re.regex($e.principal.process.command_line, `(?i)(dnsrecon|dnsenum|fierce|sublist3r|dnstwist)`)
+      )
+      or
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)nslookup(\.exe)?$`) and
+        re.regex($e.principal.process.command_line, `(?i)(-type=axfr|-q=axfr|-querytype=axfr|-type=any|ls\s+-[dt])`)
+      )
+      or
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(^|[/\\])dig(\.exe)?$`) and
+        re.regex($e.principal.process.command_line, `(?i)(axfr|_dmarc|\sMX\s|\sNS\s|\sTXT\s|\+short)`)
+      )
+    )
+
+  condition:
+    $e
+}
+
+// Rule 3: Bulk External DNS Enumeration — NS/MX/TXT/SOA/ANY volume over 10-minute window
+rule t1590_002_bulk_dns_enumeration {
+  meta:
+    author = "Detection Engineer"
+    description = "Detects bulk NS/MX/TXT/SOA/ANY queries from a single external IP exceeding 30 events or 20 unique names in a 10-minute window"
+    mitre_attack_tactic = "Reconnaissance"
+    mitre_attack_technique = "T1590.002"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    false_positives = "IPAM platforms, vulnerability scanners, authorized attack surface management tools"
+
+  events:
+    $e.metadata.event_type = "NETWORK_DNS"
+    (
+      $e.network.dns.questions.type = "NS" or
+      $e.network.dns.questions.type = "MX" or
+      $e.network.dns.questions.type = "TXT" or
+      $e.network.dns.questions.type = "SOA" or
+      $e.network.dns.questions.type = "ANY"
+    )
+    not net.ip_in_range_cidr($e.principal.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($e.principal.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($e.principal.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($e.principal.ip, "127.0.0.0/8")
+    $ip = $e.principal.ip
+    $name = $e.network.dns.questions.name
+
+  match:
+    $ip over 10m
+
+  outcome:
+    $unique_names = count_distinct($name)
+    $query_count = count()
+
+  condition:
+    $query_count > 30 or $unique_names > 20
+}

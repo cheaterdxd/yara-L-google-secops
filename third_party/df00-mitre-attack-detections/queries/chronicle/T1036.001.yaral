@@ -1,0 +1,45 @@
+# T1036.001 — Invalid Code Signature
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting process launch events where the target binary carries an authenticode signature that is present but invalid, expired, revoked, or untrusted.
+# Data Sources: Chronicle UDM (via Windows Sysmon Forwarder), Chronicle UDM (via Microsoft Defender for Endpoint ingestion), Chronicle UDM (via CrowdStrike Falcon ingestion)
+# Required Sources: PROCESS_LAUNCH UDM events with PE metadata
+# False Positives: Enterprise internal applications signed with a corporate root CA certificate that is not trusted by the global CA store used for validation in the UDM enrichment pipeline, Legitimate software distributed via internal package management (e.g., Chocolatey, SCCM) where certificate expiry predates the detection window, Penetration testing tools or red team frameworks intentionally loaded with test or self-signed certificates as part of authorized security exercises
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1036.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule invalid_code_signature_t1036_001 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects process execution or image load events where a code signature is present but in an invalid, expired, revoked, or untrusted state, indicating potential T1036.001 masquerading activity."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1036.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1036/001/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.authenticode_hash.sha256 != ""
+    $e.target.process.file.pe.signature_present = true
+    $e.target.process.file.pe.is_signed = true
+    (
+      $e.target.process.file.pe.signature_type = "INVALID" or
+      $e.target.process.file.pe.signature_type = "EXPIRED" or
+      $e.target.process.file.pe.signature_type = "REVOKED" or
+      $e.target.process.file.pe.signature_type = "UNTRUSTED"
+    )
+    $e.target.process.file.pe.issuer != ""
+    not $e.principal.hostname = ""
+
+    $host = $e.principal.hostname
+    $image = $e.target.process.file.full_path
+    $signer = $e.target.process.file.pe.issuer
+    $sigstate = $e.target.process.file.pe.signature_type
+
+  condition:
+    $e
+}

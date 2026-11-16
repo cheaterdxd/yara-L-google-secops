@@ -1,0 +1,57 @@
+# T1003.005 — Cached Domain Credentials
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1003.005 cached domain credential access patterns across three vectors: process execution of known dumping tools (Mimikatz, LaZagne, Cachedump), registry read events on HKLM\SECURITY\Cache and NL$ secrets by non-system processes, and unauthorized file access to Linux SSSD credential cache databases.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows Sysmon via Chronicle forwarder, Linux auditd via Chronicle forwarder, Microsoft Defender for Endpoint via Chronicle integration
+# Required Sources: UDM Events (PROCESS_LAUNCH, REGISTRY_READ, FILE_OPEN)
+# False Positives: Privileged access workstation (PAW) management solutions that inventory LSA configuration as part of hardening compliance checks — whitelist by known PAW management service accounts, SSSD daemon child processes (sssd_be, sssd_sudo) that may appear under unexpected parent processes during authentication failures or cache rebuild operations, Authorized penetration testing using Mimikatz with lsadump::cache — correlate with approved pentest window and source host
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1003.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1003_005_cached_domain_credentials {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects access to cached domain credentials (DCC2/MS-Cache v2) via credential dumping tools, LSA cache registry access, or SSSD cache file access on Linux."
+    mitre_attack_technique = "T1003.005"
+    mitre_attack_tactic = "Credential Access"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1003/005/"
+    version = "1.0"
+
+  events:
+    (
+      // Pattern 1: Known credential dumping tool process execution
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.target.process.command_line, `(?i)(lsadump::cache|cachedump|mscache|ms-cache)`) or
+        re.regex($e1.target.process.file.full_path, `(?i)(lazagne|cachedump|fgdump|gsecdump)\.exe`)
+      )
+    )
+    or
+    (
+      // Pattern 2: Non-system process accessing LSA cache registry keys
+      $e1.metadata.event_type = "REGISTRY_READ"
+      and (
+        re.regex($e1.target.registry.registry_key, `(?i)\\SECURITY\\Cache`) or
+        re.regex($e1.target.registry.registry_key, `(?i)\\SECURITY\\Policy\\Secrets\\NL\$`)
+      )
+      and not re.regex($e1.principal.process.file.full_path, `(?i)(lsass|svchost|services)\.exe$`)
+    )
+    or
+    (
+      // Pattern 3: Unauthorized access to Linux SSSD credential cache
+      $e1.metadata.event_type = "FILE_OPEN"
+      and (
+        re.regex($e1.target.file.full_path, `/var/lib/sss/db/`) or
+        re.regex($e1.target.file.full_path, `/var/opt/quest/vas/authcache/`)
+      )
+      and not re.regex($e1.principal.process.file.full_path, `sssd`)
+    )
+
+  condition:
+    $e1
+}

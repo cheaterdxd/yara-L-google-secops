@@ -1,0 +1,44 @@
+# T1583.004 — Server
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting C2 beaconing patterns to adversary-controlled server infrastructure.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Windows Endpoint Telemetry via Chronicle Forwarder, Sysmon EventCode 3 via Chronicle Ingestion
+# Required Sources: NETWORK_CONNECTION UDM events
+# False Positives: LOLBin-based administrative tooling such as PowerShell monitoring scripts or certutil used for certificate operations making regular connections to partner or vendor systems that resolve to public IPs not covered by the exclusion regex, Software distribution tools invoking msiexec or similar LOLBins to download packages from vendor servers that do not use well-known CDN domains, Developer automation tools such as curl or wget invoked by scheduled tasks to poll external package registries or APIs at regular intervals
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1583.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1583_004_c2_beaconing_adversary_server {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects C2 beaconing to adversary-controlled server infrastructure - T1583.004"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1583.004"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1583/004/"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    not re.regex($e.target.ip,
+      `^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.|::1$|fe80:)`)
+    not re.regex($e.target.hostname,
+      `(?i)(microsoft\.com|windows\.com|windowsupdate\.com|office\.com|live\.com|azure\.com|microsoftonline\.com|office365\.com|akamaiedge\.net|akamaitechnologies\.com|cloudflare\.com|cloudflare-dns\.com|amazonaws\.com|googleapis\.com|apple\.com|icloud\.com|digicert\.com|verisign\.com)$`)
+    not re.regex($e.principal.process.file.full_path,
+      `(?i)(msedge\.exe|chrome\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|outlook\.exe|teams\.exe|slack\.exe|zoom\.exe|onedrive\.exe|msedgewebview2\.exe|microsoftedgecp\.exe)$`)
+    re.regex($e.principal.process.file.full_path,
+      `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|rundll32\.exe|regsvr32\.exe|mshta\.exe|certutil\.exe|bitsadmin\.exe|curl\.exe|wget\.exe|msiexec\.exe|odbcconf\.exe|wmic\.exe|msbuild\.exe|csc\.exe)$`)
+    $host = $e.principal.hostname
+    $dst_ip = $e.target.ip
+    $proc = $e.principal.process.file.full_path
+
+  match:
+    $host, $dst_ip, $proc over 24h
+
+  condition:
+    #e >= 10
+}

@@ -1,0 +1,40 @@
+# T1222 — File and Directory Permissions Modification
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule for T1222 File and Directory Permissions Modification.
+# Data Sources: Google Chronicle UDM - Windows endpoint telemetry, Chronicle Windows Event Log parser (Sysmon PROCESS_LAUNCH events), Chronicle Forwarder with Windows Sysmon or Defender for Endpoint data
+# Required Sources: UDM events with event_type PROCESS_LAUNCH
+# False Positives: Enterprise software deployment tools (SCCM, Intune, PDQ Deploy) that invoke icacls or attrib to set permissions during application installation or update cycles on managed endpoints, Automated system hardening scripts run by security teams enforcing CIS Benchmark or STIG baseline permissions using Set-Acl or icacls on known system paths, Database administrators using PowerShell Set-Acl to configure SQL Server data directory permissions during initial installation, patching, or disaster recovery failover procedures
+# Confidence: high  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1222
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1222_windows_permission_modification {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1222 File and Directory Permissions Modification using Windows ACL and permission tools"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1222"
+    reference = "https://attack.mitre.org/techniques/T1222/"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(icacls|cacls|xcacls|takeown|attrib|SetACL)\.exe$`) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)powershell\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(Set-Acl|SetAccessControl|InheritanceFlags|PropagationFlags|FileSystemAccessRule|RegistryAccessRule|AddAccessRule|SetOwner)`)
+      ) or
+      (
+        re.regex($e.target.process.file.full_path, `(?i)cmd\.exe$`) and
+        re.regex($e.target.process.command_line, `(?i)(icacls|cacls|takeown|SetACL)`)
+      )
+    )
+
+  condition:
+    $e
+}

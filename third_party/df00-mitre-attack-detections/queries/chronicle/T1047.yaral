@@ -1,0 +1,52 @@
+# T1047 — Windows Management Instrumentation
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Windows Management Instrumentation abuse (T1047) using UDM PROCESS_LAUNCH events.
+# Data Sources: Google Chronicle UDM, Windows Endpoint Telemetry via Chronicle Forwarder, Sysmon Event ID 1 normalized to UDM PROCESS_LAUNCH
+# Required Sources: UDM PROCESS_LAUNCH events
+# False Positives: Enterprise endpoint management platforms (Tanium, BigFix, Altiris) that use wmic.exe for periodic hardware and OS inventory collection, generating computersystem get and logicaldisk get command lines that match reconnaissance argument patterns., WmiPrvSE.exe spawning dllhost.exe variants or vendor-specific management processes during COM/DCOM object instantiation from legitimate WMI providers installed by backup, AV, or monitoring software., DevOps automation (Ansible WinRM modules, PowerShell DSC) running Get-CimInstance or Invoke-WmiMethod in deployment pipelines with remote -ComputerName targeting that matches the remote execution pattern.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1047
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule wmi_abuse_t1047 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects WMI abuse via wmic.exe suspicious args, WmiPrvSE.exe spawning unexpected children, or PowerShell WMI class/cmdlet execution"
+    technique = "T1047"
+    tactic = "Execution"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1047/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        // Branch 1: wmic.exe with suspicious arguments
+        re.regex($e.target.process.file.full_path, `(?i)\\wmic\.exe$`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(process\s+call\s+create|shadowcopy\s+(delete|where)|\/node:|os\s+get|computersystem\s+get|service\s+where|nicconfig|logicaldisk\s+get|startup\s+list|useraccount\s+get)`)
+      ) or
+      (
+        // Branch 2: WmiPrvSE.exe spawning unexpected child processes
+        re.regex($e.principal.process.file.full_path, `(?i)\\wmiprvse\.exe$`) and
+        not re.regex($e.target.process.file.full_path,
+          `(?i)\\(wmiprvse|msiexec|svchost|searchindexer|werfault|dllhost)\.exe$`)
+      ) or
+      (
+        // Branch 3: PowerShell executing via WMI classes or cmdlets
+        re.regex($e.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(invoke-wmimethod|get-wmiobject|get-ciminstance|\[wmiclass\]|\[wmi\]|win32_process|win32_shadowcopy|win32_service|wmiexec)`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(create|startservice|delete|invoke|exec|callmethod)`)
+      )
+    )
+
+  condition:
+    $e
+}

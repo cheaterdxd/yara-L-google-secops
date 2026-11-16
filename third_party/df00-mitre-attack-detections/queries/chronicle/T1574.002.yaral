@@ -1,0 +1,55 @@
+# T1574.002 — DLL Side-Loading
+# Tactic: Persistence, Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that correlates a verified signed process launch event with a subsequent unsigned DLL module load event from a suspicious writable path on the same host within a 5-minute window.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Endpoint telemetry via Chronicle forwarder, Microsoft Defender for Endpoint events via Chronicle ingestion
+# Required Sources: PROCESS_LAUNCH UDM events, PROCESS_MODULE_LOAD UDM events
+# False Positives: Security vendor software (e.g., Trend Micro, McAfee) that legitimately loads unsigned component DLLs from ProgramData sub-directories during real-time protection operations., Automated software update mechanisms for large enterprise vendors (e.g., SAP, Oracle) that stage new unsigned DLL versions in Temp or ProgramData before swapping them in under a signed host process., Developer build and test environments where developers intentionally place test DLLs alongside signed SDK or runtime host binaries in writable directories.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1574.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule dll_side_loading_suspicious_path {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects DLL side-loading: a signed, trusted process loading an unsigned or untrusted DLL from a user-writable suspicious directory path."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion, Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1574.002"
+    reference = "https://attack.mitre.org/techniques/T1574/002/"
+
+  events:
+    $load.metadata.event_type = "PROCESS_MODULE_LOAD"
+    $load.principal.hostname = $hostname
+    $load.target.file.full_path = $dll_path
+    (
+      $load.target.file.pe_file.signature_info.check_status != "SIGNATURE_CHECK_STATUS_VERIFIED"
+      or
+      re.regex($load.target.file.full_path, `(?i)(\\appdata\\|\\temp\\|\\programdata\\|\\users\\public\\|\\downloads\\)`)
+    )
+    re.regex($load.target.file.full_path, `(?i)(\\appdata\\|\\temp\\|\\programdata\\|\\users\\public\\|\\downloads\\)`)
+
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    $proc.principal.hostname = $hostname
+    $proc.target.process.file.full_path = $loader_path
+    $proc.target.file.pe_file.signature_info.check_status = "SIGNATURE_CHECK_STATUS_VERIFIED"
+    not re.regex($proc.target.process.file.full_path, `(?i)(\\appdata\\|\\temp\\|\\programdata\\)`)
+
+    $load.principal.process.pid = $proc.target.process.pid
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $risk_score = if(
+      re.regex($loader_path, `(?i)(symantec|norton|vmware|logmein|teamviewer|anydesk|cisco|adobe|microsoft)`),
+      95, 75
+    )
+    $summary = array_distinct($dll_path)
+
+  condition:
+    $load and $proc
+}

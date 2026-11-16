@@ -1,0 +1,44 @@
+# T1210 — Exploitation of Remote Services
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1210 exploitation of remote services.
+# Data Sources: Google Chronicle UDM (PROCESS_LAUNCH events), Google Chronicle UDM (INJECTED_CODE events), Chronicle Forwarder with Windows Event Log / Sysmon parser, CrowdStrike Falcon Chronicle integration
+# Required Sources: UDM Events (PROCESS_LAUNCH), UDM Events (INJECTED_CODE)
+# False Positives: Enterprise software management solutions (Tanium, BigFix) that deploy updates or run inventory scripts through service processes, legitimately spawning cmd.exe or PowerShell during maintenance windows, Print management software or printer driver installers that temporarily spawn shell processes from spoolsv.exe during legitimate printer driver installation or update operations, Web application frameworks (ASP.NET, Java on IIS) that use process execution for PDF generation, image processing, or external tool invocation as documented application functionality
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1210
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1210_exploitation_remote_services {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1210 - Exploitation of Remote Services. Identifies suspicious child processes spawned from exploitable Windows service executables (PrintNightmare, ZeroLogon, IIS, SQL, VMware CVEs) and CreateRemoteThread injection from service processes."
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1210"
+    severity = "CRITICAL"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1210/"
+    version = "1.0"
+
+  events:
+    (
+      // Branch 1: Service parent spawning suspicious child (process create)
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path, `(?i)(spoolsv|lsass|services|winlogon|w3wp|sqlservr|vmtoolsd)\.exe$`)
+        or re.regex($e1.target.process.file.full_path, `(?i)(spoolsv|lsass|services|winlogon|w3wp|sqlservr|vmtoolsd)\.exe$`)
+      )
+      and re.regex($e1.target.process.file.full_path, `(?i)(cmd|powershell|pwsh|net|net1|whoami|certutil|mshta|wscript|cscript|regsvr32|rundll32|msiexec|curl|wget)\.exe$`)
+    )
+    or
+    (
+      // Branch 2: CreateRemoteThread from service process (injection)
+      $e1.metadata.event_type = "INJECTED_CODE"
+      and re.regex($e1.principal.process.file.full_path, `(?i)(spoolsv|lsass|services|winlogon|w3wp|sqlservr|vmtoolsd)\.exe$`)
+    )
+
+  condition:
+    $e1
+}

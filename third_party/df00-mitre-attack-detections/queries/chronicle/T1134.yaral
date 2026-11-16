@@ -1,0 +1,55 @@
+# T1134 — Access Token Manipulation
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Windows access token manipulation (T1134) across three detection branches: execution of known Potato-family and token theft tools, PowerShell invoking Windows token manipulation APIs or sensitive privilege constants, and USER_PRIVILEGE_ESCALATION events where non-service interactive accounts receive high-value token privileges.
+# Data Sources: Windows Security Event Log via Chronicle forwarder, Sysmon via Chronicle Windows sensor, Endpoint telemetry via Chronicle SIEM agent
+# Required Sources: UDM events: PROCESS_LAUNCH, USER_PRIVILEGE_ESCALATION
+# False Positives: Managed service accounts (MSAs) and group managed service accounts (gMSAs) for SQL Server, IIS, or Exchange that receive high-privilege tokens at service start — these end in '$' and should be excluded by the account filter, but custom naming conventions may bypass the filter., Security orchestration platforms (Splunk SOAR, Palo Alto XSOAR) that execute PowerShell runbooks with token management functions for automated incident response., Software deployment systems (SCCM, Intune) that use CreateProcessWithToken for deploying packages under the SYSTEM context may generate false positives on endpoints with verbose logging.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1134
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule access_token_manipulation_t1134 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Windows access token manipulation via known tools, PowerShell API abuse, or suspicious privilege assignments (T1134)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Privilege Escalation, Defense Evasion"
+    mitre_attack_technique = "T1134"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1134/"
+    reference = "https://attack.mitre.org/techniques/T1134/"
+    yara_l_version = "2.0"
+    false_positives = "Service accounts with legitimate SeDebugPrivilege, authorized red team activities"
+
+  events:
+    (
+      // Branch 1: Known token manipulation tools
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and (
+          re.regex($e.target.process.file.full_path, `(?i)(juicypotato|printspoofer|sweetpotato|godpotato|roguewinrm|rottenpotatong|incognito|tokenvator)`)
+          or re.regex($e.target.process.command_line, `(?i)(juicypotato|printspoofer|sweetpotato|godpotato|roguewinrm|incognito|tokenvator)`)
+        )
+      )
+      or
+      // Branch 2: PowerShell token API abuse
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH"
+        and re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)`)
+        and re.regex($e.target.process.command_line, `(?i)(Invoke-TokenManipulation|Get-SecurityToken|DuplicateTokenEx|OpenProcessToken|AdjustTokenPrivileges|CreateProcessWithToken|ImpersonateLoggedOnUser|SetThreadToken|NtImpersonateThread|Invoke-RunAs|SeDebugPrivilege|SeAssignPrimaryTokenPrivilege|SeTcbPrivilege|SeCreateTokenPrivilege)`)
+      )
+      or
+      // Branch 3: Suspicious special privilege assignment (Event ID 4672 equivalent)
+      (
+        $e.metadata.event_type = "USER_PRIVILEGE_ESCALATION"
+        and not re.regex($e.principal.user.userid, `(?i)(\$$|^SYSTEM$|^LOCAL SERVICE$|^NETWORK SERVICE$|^DWM-|^UMFD-)`)
+        and re.regex($e.target.resource.name, `(?i)(SeDebugPrivilege|SeAssignPrimaryTokenPrivilege|SeTcbPrivilege|SeCreateTokenPrivilege)`)
+      )
+    )
+
+  condition:
+    $e
+}

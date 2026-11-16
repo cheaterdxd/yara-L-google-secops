@@ -1,0 +1,22 @@
+rule impossible_travel_success {
+  meta:
+    author = "Kelvin Odarikpe"
+    description = "Two successful logins for the same user from different countries inside 2h"
+    severity = "HIGH"
+    mitre = "T1078"
+    portfolio = "true"
+    product = "Google SecOps / Chronicle"
+  events:
+    $a.metadata.event_type = "USER_LOGIN"
+    $b.metadata.event_type = "USER_LOGIN"
+    $a.security_result.action = "ALLOW"
+    $b.security_result.action = "ALLOW"
+    $a.principal.user.userid = $b.principal.user.userid
+  match:
+    $a.principal.user.userid over 2h
+  outcome:
+    $user = $a.principal.user.userid
+  condition:
+    $a and $b and
+    $a.principal.ip_geo_artifact.location.country_or_region != $b.principal.ip_geo_artifact.location.country_or_region
+}

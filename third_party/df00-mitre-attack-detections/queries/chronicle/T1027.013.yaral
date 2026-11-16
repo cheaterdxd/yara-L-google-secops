@@ -1,0 +1,32 @@
+# T1027.013 — Encrypted/Encoded File
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting process launch events where LOLBins or interpreter processes execute known file decoding or decryption argument patterns associated with obfuscated payload staging.
+# Data Sources: Chronicle SIEM, Google Workspace, Windows Event Logs via Chronicle
+# Required Sources: udm.events
+# False Positives: Certificate management tooling using certutil decode in enterprise environments, PowerShell remoting infrastructure using encoded command serialization, Developer tools and automation scripts performing legitimate base64 decode operations
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.013
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_013_encoded_file_decode {
+  meta:
+    author = "argus-v1"
+    description = "Detects processes decoding or decrypting encoded/encrypted file content, indicative of T1027.013 obfuscated payload staging."
+    severity = "HIGH"
+    tactic = "TA0005"
+    technique = "T1027.013"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path = /(?i)(certutil|powershell|pwsh|python|wscript|cscript|mshta)/
+    (
+      $e.target.process.command_line = /(?i)(-decode|-decodehex|-EncodedCommand|FromBase64String|openssl enc|base64 -d|\[Convert\]::FromBase64)/
+    )
+    $e.principal.hostname = $host
+
+  condition:
+    $e
+}

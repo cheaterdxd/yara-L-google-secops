@@ -1,0 +1,59 @@
+# T1059.003 — Windows Command Shell
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1059.003 Windows Command Shell abuse using UDM process launch events.
+# Data Sources: Google Chronicle SIEM, Windows Endpoint via Chronicle Forwarder, Sysmon via Chronicle Windows Event Log ingestion
+# Required Sources: UDM Events (PROCESS_LAUNCH type)
+# False Positives: Enterprise certificate lifecycle management tools that invoke certutil via cmd.exe for certificate enrollment, renewal, or CRL verification on managed endpoints, Legitimate system imaging and backup solutions using vssadmin or wmic through batch wrappers to manage snapshot lifecycles during scheduled maintenance windows, Group Policy-based login scripts distributed via Active Directory that spawn cmd.exe from winlogon to configure user environments using reg, net, or schtasks
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1059_003_windows_cmd_shell_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1059.003 Windows Command Shell abuse — suspicious cmd.exe executions using certutil, bitsadmin, schtasks, net user, wmic/vssadmin shadow deletion, bcdedit, or cmd.exe spawned from Office or script-interpreter parents."
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.003"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1059/003/"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2024-01-01"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)\\cmd\.exe$`) or
+      $e.target.process.file.basename = "cmd.exe"
+    )
+    (
+      re.regex($e.target.process.command_line,
+        `(?i)(certutil\s+(-urlcache|-decode|-encode)|bitsadmin\s+(/transfer|/create)|reg\s+(add|delete|save)\s|schtasks\s+(/create|/change)|net\s+user\s+.*\s*/add|net\s+localgroup\s+administrators|wmic\s+(process\s+call\s+create|shadowcopy\s+delete)|vssadmin\s+delete\s+shadows|bcdedit\s+/set|icacls\s+/grant|takeown\s+/f|echo\s+\|\s+set\s+/p=|>\s*\\\\pipe\\)`) or
+      re.regex($e.principal.process.file.full_path,
+        `(?i)(winword|excel|powerpnt|outlook|mshta|wscript|cscript|rundll32|regsvr32)\.exe$`)
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.target.process.command_line, `(?i)certutil\s+(-urlcache|-decode)`), 30, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)vssadmin\s+delete\s+shadows|wmic\s+shadowcopy\s+delete`), 40, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)schtasks\s+/create`), 20, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)net\s+user\s+.*\s*/add`), 25, 0) +
+      if(re.regex($e.target.process.command_line, `(?i)bcdedit\s+/set`), 35, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)(mshta|wscript|cscript|rundll32|regsvr32)\.exe$`), 40, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)(winword|excel|powerpnt|outlook)\.exe$`), 50, 0)
+    )
+    $hostname = $e.principal.hostname
+    $username = $e.principal.user.userid
+    $command_line = $e.target.process.command_line
+    $parent_process = $e.principal.process.file.full_path
+
+  condition:
+    $e and $risk_score > 0
+}

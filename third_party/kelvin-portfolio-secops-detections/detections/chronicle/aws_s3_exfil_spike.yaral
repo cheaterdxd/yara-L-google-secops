@@ -1,0 +1,18 @@
+rule aws_s3_exfil_spike {
+  meta:
+    author = "Kelvin Odarikpe"
+    description = "Spike of S3 GetObject / CopyObject from a principal not seen as a batch job"
+    severity = "HIGH"
+    mitre = "T1530"
+    portfolio = "true"
+    product = "Google SecOps / Chronicle"
+  events:
+    $e.metadata.vendor_name = "AMAZON"
+    $e.metadata.product_name = "AWS CloudTrail"
+    $e.metadata.event_type = "RESOURCE_READ"
+    $e.target.resource.resource_type = "STORAGE_BUCKET"
+  match:
+    $e.principal.user.userid over 15m
+  condition:
+    $e
+}

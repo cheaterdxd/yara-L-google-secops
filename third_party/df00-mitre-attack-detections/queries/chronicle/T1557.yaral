@@ -1,0 +1,48 @@
+# T1557 — Adversary-in-the-Middle
+# Tactic: Credential Access, Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting AiTM tool execution by matching process launch events against known AiTM tool names and command-line keywords using UDM field model.
+# Data Sources: Chronicle UDM Process Launch Events, Google Chronicle with Windows Event Forwarding, Chronicle Endpoint Detection telemetry
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Red team operators conducting authorized adversary simulation exercises with Responder or Bettercap, Network administrators modifying DNS server settings via netsh or PowerShell during approved change windows, Security researchers using mitmproxy or sslstrip for web application security assessments, Python-based automation scripts that include argument strings matching AiTM tool names
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1557
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule aitm_tool_execution_t1557 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects execution of known Adversary-in-the-Middle (AiTM) tools including Responder, Bettercap, Ettercap, mitmproxy, ntlmrelayx, dnschef, mitm6, and EvilGinx2. Also detects DNS config modification via netsh and PowerShell. Maps to MITRE ATT&CK T1557 and sub-techniques T1557.001, T1557.002, T1557.003."
+    mitre_attack_tactic = "Collection, Credential Access"
+    mitre_attack_technique = "T1557"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.principal.process.file.full_path, `(?i)(responder\.exe|bettercap|bettercap\.exe|ettercap|ettercap\.exe|mitmproxy|mitmdump|mitmweb|dnschef|sslstrip|evilginx|evilginx2|mitm6)`) OR
+      re.regex($e.target.process.command_line, `(?i)(responder|ntlmrelayx|smbrelayx|multirelay|impacket-ntlmrelayx|bettercap|ettercap|arpspoof|arp-spoof|mitmproxy|mitmdump|mitmweb|sslstrip|dnschef|mitm6|evilginx|set-dnsclientserveraddress)`) OR
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)(python\.exe|python3\.exe|python3)`) AND
+        re.regex($e.target.process.command_line, `(?i)(ntlmrelayx|smbrelayx|responder|mitm6|dnschef|evilginx|bettercap)`)
+      ) OR
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)\\arp\.exe`) AND
+        re.regex($e.target.process.command_line, `(?i)\s-s\s`)
+      ) OR
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)\\netsh\.exe`) AND
+        re.regex($e.target.process.command_line, `(?i)(interface.*dns.*set|int.*ip.*set.*dns)`)
+      ) OR
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)\\powershell\.exe`) AND
+        re.regex($e.target.process.command_line, `(?i)set-dnsclientserveraddress`)
+      )
+    )
+
+  condition:
+    $e
+}

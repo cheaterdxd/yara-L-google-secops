@@ -1,0 +1,58 @@
+# T1090.003 — Multi-hop Proxy
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two complementary Chronicle YARA-L 2.0 rules detecting T1090.003.
+# Data Sources: Chronicle UDM PROCESS_LAUNCH events from endpoint telemetry, Chronicle UDM NETWORK_CONNECTION events from network sensors or EDR, Google Cloud Chronicle Forwarder ingesting Sysmon or CrowdStrike data
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH, UDM events with metadata.event_type = NETWORK_CONNECTION
+# False Positives: Authorized red team or penetration testing personnel running Tor, plink, or ProxyChains on Chronicle-enrolled endpoints during documented, scoped engagements, DevOps or SRE teams establishing SSH dynamic port forwarding (-D) or multi-hop ProxyJump chains to reach services in isolated network segments as part of standard access procedures, OSINT analysts or threat intelligence researchers using Tor Browser on corporate devices to access dark web resources under an approved, policy-documented research exception
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1090.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1090_003_multi_hop_proxy_process_launch {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1090.003 - Multi-hop proxy via known proxy tool execution and SSH dynamic forwarding"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1090.003"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(tor\.exe|proxychains|proxifier\.exe|3proxy\.exe|srelay\.exe|microsocks|redsocks|plink\.exe)`)
+      or re.regex($e.target.process.command_line, `(?i)(proxychains|socks5|socks4a?|tor2web|proxyjump|proxycommand|dynamicforward)`)
+      or (
+        re.regex($e.target.process.file.full_path, `(?i)[\\/]ssh(\.exe)?$|plink\.exe$`)
+        and re.regex($e.target.process.command_line, `(?i)(\s-[DJw]\s|proxyjump|proxycommand)`)
+      )
+    )
+
+  condition:
+    $e
+}
+
+rule t1090_003_tor_port_network_connection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1090.003 - Outbound network connection to Tor relay ports on public IP addresses"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1090.003"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.target.port in (9001, 9030, 9040, 9050, 9051, 9150, 9151)
+    not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($e.target.ip, "127.0.0.0/8")
+
+  condition:
+    $e
+}

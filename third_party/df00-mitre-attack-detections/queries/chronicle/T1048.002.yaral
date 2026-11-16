@@ -1,0 +1,49 @@
+# T1048.002 — Exfiltration Over Asymmetric Encrypted Non-C2 Protocol
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1048.002 exfiltration over asymmetrically encrypted non-C2 protocols.
+# Data Sources: Google Chronicle with Windows Sysmon via Forwarder Agent, Chronicle with CrowdStrike Falcon or Carbon Black EDR telemetry, Chronicle Unified Data Model (UDM)
+# Required Sources: UDM PROCESS_LAUNCH events, UDM NETWORK_CONNECTION events
+# False Positives: Legitimate administrative use of SFTP/SCP client tools for authorized file transfers to managed external servers, cloud VMs, or hosted infrastructure, Authorized rclone or WinSCP deployments performing scheduled or on-demand backups to approved cloud storage providers with known destination IPs, DevOps automation workflows invoking curl or wget over HTTPS to interact with external package repositories, APIs, or artifact upload endpoints, Email relay infrastructure components sending via SMTPS to external mail gateway services on ports 465 or 587 as part of normal mail flow
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1048.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1048_002_exfil_asymmetric_encrypted_non_c2 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects exfiltration over asymmetrically encrypted non-C2 protocols (T1048.002) including SFTP, SCP, SMTPS, FTPS, and WebDAV. Correlates PROCESS_LAUNCH events for known exfiltration tools or suspicious shell/curl invocations with NETWORK_CONNECTION events to encrypted protocol ports on public IPs within a one-hour window per hostname."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1048.002"
+    reference = "https://attack.mitre.org/techniques/T1048/002/"
+    version = "1.0"
+
+  events:
+    $e1.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($e1.target.process.file.full_path, `(?i)(rclone\.exe|winscp\.exe|pscp\.exe|psftp\.exe|filezilla\.exe|sftp\.exe|scp\.exe)`) or
+      (
+        re.regex($e1.target.process.file.full_path, `(?i)(powershell\.exe|cmd\.exe)`) and
+        re.regex($e1.target.process.command_line, `(?i)(sftp|\bscp\b|smtps|ftps|webdav|rclone|winscp)`)
+      ) or
+      (
+        re.regex($e1.target.process.file.full_path, `(?i)(curl\.exe|wget\.exe)`) and
+        re.regex($e1.target.process.command_line, `(?i)(--ssl|--tls|sftp://|ftps://|smtps://)`)
+      )
+    )
+
+    $e2.metadata.event_type = "NETWORK_CONNECTION"
+    $e2.principal.hostname = $e1.principal.hostname
+    $e2.target.port in (22, 443, 465, 587, 990, 993, 8443, 21)
+    not re.regex($e2.target.ip, `^(10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.|127\.)`)
+
+  match:
+    $e1.principal.hostname over 1h
+
+  condition:
+    $e1 and $e2
+}

@@ -1,0 +1,51 @@
+rule data_exfiltration_detection {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects data exfiltration: outbound data transfers exceeding 500MB to external IPs outside business hours (before 08:00 or after 18:00 local time)"
+    severity = "CRITICAL"
+    priority = "P1"
+    mitre_tactic = "Exfiltration"
+    mitre_technique = "T1041"
+    mitre_subtechnique = "T1048.003"
+    reference = "https://attack.mitre.org/techniques/T1041/"
+    additional_techniques = "T1048, T1030"
+    created = "2024-01-15"
+    version = "1.2"
+
+  events:
+    $exfil.metadata.event_type = "NETWORK_CONNECTION"
+    $exfil.principal.ip = $internal_ip
+    $exfil.target.ip = $external_ip
+    $exfil.network.sent_bytes > 524288000
+    not (
+      $exfil.target.ip = /^10\.|^172\.(1[6-9]|2[0-9]|3[01])\.|^192\.168\./
+    )
+    not (
+      $exfil.target.ip = /^127\.|^169\.254\.|^100\.64\./
+    )
+    (
+      $exfil.metadata.event_timestamp.seconds % 86400 < 28800 or
+      $exfil.metadata.event_timestamp.seconds % 86400 > 64800
+    )
+    $exfil.principal.hostname = $src_hostname
+
+  match:
+    $internal_ip, $external_ip over 30m
+
+  condition:
+    #exfil >= 1
+
+  outcome:
+    $risk_score = max(98)
+    $source_host = $src_hostname
+    $source_ip = $internal_ip
+    $destination_ip = $external_ip
+    $total_bytes_sent = sum($exfil.network.sent_bytes)
+    $destination_port = array_distinct($exfil.network.destination_port)
+    $protocol = array_distinct($exfil.network.application_protocol)
+    $transfer_count = count($exfil.metadata.id)
+    $severity_label = "CRITICAL"
+    $playbook = "data_exfiltration_response"
+    $ioc_type = "ip_address"
+    $containment_action = "block_ip,isolate_host"
+}

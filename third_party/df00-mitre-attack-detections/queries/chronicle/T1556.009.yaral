@@ -1,0 +1,40 @@
+# T1556.009 — Conditional Access Policies
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting Azure AD Conditional Access Policy and Named Location modifications via the AZURE_AD_AUDIT log type.
+# Data Sources: Azure AD Audit Logs ingested via Chronicle AZURE_AD_AUDIT log type (Google Cloud Chronicle / Security Operations)
+# Required Sources: AZURE_AD_AUDIT UDM events
+# False Positives: Azure AD Global Administrators or Security Administrators conducting quarterly policy reviews and updating IP allowlists, Microsoft Entra ID Governance workflows that automatically update CAP exclusion groups during access review completions, Infrastructure-as-code deployments via Azure DevOps pipelines using service principals with directory write permissions
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1556_009_conditional_access_policy_modification {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects Azure AD Conditional Access Policy and Named Location lifecycle events indicative of T1556.009 — persistence via CAP weakening"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1556.009"
+    severity = "HIGH"
+    confidence = "HIGH"
+    rule_version = "1.0"
+
+  events:
+    $e.metadata.log_type = "AZURE_AD_AUDIT"
+    $e.metadata.product_event_type in (
+      "Add conditional access policy",
+      "Update conditional access policy",
+      "Delete conditional access policy",
+      "Add named location",
+      "Update named location",
+      "Delete named location"
+    )
+    $actor = $e.principal.user.userid
+    $policy = $e.target.resource.name
+    $op = $e.metadata.product_event_type
+
+  condition:
+    $e
+}

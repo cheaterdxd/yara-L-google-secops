@@ -1,0 +1,41 @@
+# T1218.007 — Msiexec
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1218.007 msiexec.exe proxy execution abuse using UDM event model.
+# Data Sources: Google Chronicle (Unified Data Model), Windows Event Logs via Chronicle Forwarder, Sysmon via Chronicle Ingestion API, Microsoft Defender for Endpoint via Chronicle Integration
+# Required Sources: UDM PROCESS_LAUNCH events
+# False Positives: Enterprise software deployment tools (SCCM, Intune, Altiris) executing msiexec silently from AppData or Temp staging directories as part of policy-driven software pushes, Vulnerability management agents (Qualys, Tenable) that install update packages via msiexec with /quiet from their own AppData working directories, Legitimate macro-enabled Office documents used by finance or HR teams that invoke msiexec as part of sanctioned document-driven workflows, triggering the Office parent process indicator
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.007
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1218_007_msiexec_proxy_execution {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects msiexec.exe abuse for proxy execution of malicious payloads via remote MSI loading, DLL registration, silent install from suspicious paths, or suspicious parent processes. MITRE ATT&CK T1218.007 - Defense Evasion."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1218.007"
+    mitre_attack_technique_name = "System Binary Proxy Execution: Msiexec"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platforms = "Windows"
+    false_positives = "SCCM deployments, patch management tools, IT automation scripts"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path = /(?i)\\msiexec\.exe$/ nocase
+    (
+      re.regex($e.target.process.command_line, `(?i)(http[s]?|ftp)://`) or
+      re.regex($e.target.process.command_line, `(?i)\s/y\s`) or
+      (
+        re.regex($e.target.process.command_line, `(?i)(/q\s|/quiet\s|/passive\s)`) and
+        re.regex($e.target.process.command_line, `(?i)(temp|appdata|downloads|public|desktop)`)
+      ) or
+      re.regex($e.principal.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|winword|excel|outlook)\.exe$`)
+    )
+
+  condition:
+    $e
+}

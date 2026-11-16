@@ -1,0 +1,48 @@
+# T1036.008 — Masquerade File Type
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule matching FILE_CREATION UDM events where the initiating process is a known LOLBin or scripting engine and the target file carries a media or document extension written to a user-writable directory.
+# Data Sources: Google Chronicle — Windows Sensor (Sysmon or EDR forwarder), Chronicle UDM normalized file events
+# Required Sources: FILE_CREATION UDM events
+# False Positives: PowerShell scripts performing legitimate file type conversion (e.g., generating thumbnails, rendering PDFs) may write intermediary files to AppData, Certutil.exe invoked by patch management systems to decode base64-encoded payloads staged as image files before execution, Enterprise archiving or DLP tools using cmd.exe to copy documents into downloads with normalized extensions for policy tagging
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1036.008
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule masquerade_file_type_lolbin_drop {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects LOLBin or scripting engine processes writing files with benign media or document extensions, indicating potential file type masquerading (T1036.008)"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1036.008"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    $e.principal.process.file.full_path = /(?i)(powershell\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|certutil\.exe|bitsadmin\.exe|rundll32\.exe)$/
+    (
+      $e.target.file.full_path = /(?i)\.gif$/ or
+      $e.target.file.full_path = /(?i)\.jpg$/ or
+      $e.target.file.full_path = /(?i)\.jpeg$/ or
+      $e.target.file.full_path = /(?i)\.png$/ or
+      $e.target.file.full_path = /(?i)\.bmp$/ or
+      $e.target.file.full_path = /(?i)\.txt$/ or
+      $e.target.file.full_path = /(?i)\.pdf$/ or
+      $e.target.file.full_path = /(?i)\.mp3$/ or
+      $e.target.file.full_path = /(?i)\.wav$/ or
+      $e.target.file.full_path = /(?i)\.pub$/ or
+      $e.target.file.full_path = /(?i)\.accdb$/
+    )
+    (
+      $e.target.file.full_path = /(?i)\\temp\\/ or
+      $e.target.file.full_path = /(?i)\\tmp\\/ or
+      $e.target.file.full_path = /(?i)\\appdata\\/ or
+      $e.target.file.full_path = /(?i)\\downloads\\/
+    )
+
+  condition:
+    $e
+}

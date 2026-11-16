@@ -1,0 +1,61 @@
+# T1053 — Scheduled Task/Job
+# Tactic: Execution, Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for T1053 Scheduled Task/Job detection.
+# Data Sources: Google Chronicle (Windows endpoint telemetry via Forwarder), Windows Event Forwarding to Chronicle UDM ingestion, Chronicle SIEM UDM normalized events
+# Required Sources: UDM events (PROCESS_LAUNCH, GENERIC_EVENT with product_event_type 4698)
+# False Positives: Enterprise software deployment via SCCM or Microsoft Intune registering scheduled PowerShell runner tasks under SYSTEM context during device provisioning and policy enforcement, Third-party AV and EDR products scheduling integrity check or update tasks referencing certutil.exe or scripts in ProgramData as part of normal agent lifecycle management, Developer workstations running build automation or local CI scripts (MSBuild, npm, Gradle post-install hooks) that create schtasks entries with cmd.exe runners pointing to TEMP staging paths
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1053
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1053_scheduled_task_process_creation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious schtasks.exe or at.exe process launches with SYSTEM context, suspicious paths, remote targeting, or script execution — indicative of T1053 Scheduled Task abuse"
+    mitre_attack_technique = "T1053"
+    mitre_attack_tactic = "Persistence, Privilege Escalation, Execution"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path = /(?i)(\\schtasks\.exe$|\\at\.exe$)/
+    $e.target.process.command_line = /(?i)(\/create|\/change|-create|-change)/
+    (
+      $e.target.process.command_line = /(?i)(\/ru\s+system|nt\s+authority\\\\system)/ or
+      $e.target.process.command_line = /(?i)(appdata|\\temp\\|\\public\\|programdata|windows\\temp)/ or
+      $e.target.process.command_line = /(?i)(powershell\.exe|wscript\.exe|cscript\.exe|mshta\.exe|regsvr32\.exe|rundll32\.exe|certutil\.exe)/ or
+      $e.target.process.command_line = /\/s\s+[a-zA-Z0-9\-_.]+/ or
+      $e.target.process.command_line = /(?i)(-encodedcommand|-enc\s|-e\s|-ec\s|frombase64string)/
+    )
+
+  condition:
+    $e
+}
+
+rule t1053_scheduled_task_created_event_4698 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Windows Security Event 4698 (Scheduled Task Created) where the task action references script interpreters, suspicious paths, or encoded payloads — indicative of T1053 persistence"
+    mitre_attack_technique = "T1053"
+    mitre_attack_tactic = "Persistence, Privilege Escalation, Execution"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "GENERIC_EVENT"
+    $e.metadata.product_event_type = "4698"
+    (
+      $e.target.resource.name = /(?i)(powershell|wscript|cscript|mshta|regsvr32|rundll32|certutil)/ or
+      $e.principal.user.userid = /(?i)(^system$|s-1-5-18)/ or
+      $e.target.resource.attribute.labels["task_action"] = /(?i)(appdata|\\temp\\|\\public\\|programdata|encodedcommand|frombase64string)/
+    )
+
+  condition:
+    $e
+}

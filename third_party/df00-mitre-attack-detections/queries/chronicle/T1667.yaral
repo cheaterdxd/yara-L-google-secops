@@ -1,0 +1,34 @@
+# T1667 — Email Bombing
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for detecting Email Bombing (T1667).
+# Data Sources: Microsoft 365, Google Workspace
+# Required Sources: EMAIL_TRANSACTION
+# False Positives: Large marketing campaigns or product launches where the organization receives legitimate high-volume replies or registrations, IT monitoring systems generating notification floods due to alerting misconfiguration or infrastructure incidents affecting many monitored systems simultaneously, Users who have voluntarily subscribed to multiple high-volume newsletters or mailing lists (adjust threshold or add recipient exclusions for known high-volume users)
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1667
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detection_t1667 {
+  meta:
+    author = "Argus Detection Platform"
+    description = "Detects Email Bombing email activity - T1667"
+    severity = "HIGH"
+    mitre_attack = "T1667"
+    reference = "https://attack.mitre.org/techniques/T1667/"
+
+  events:
+    $e.metadata.event_type = "EMAIL_TRANSACTION"
+    $e.principal.user.email_addresses = $sender
+    $e.network.email.to = $recipient
+    $e.network.email.subject = $subject
+    (
+      re.regex($e.network.email.subject, `(?i)(urgent|wire.?transfer|payment|invoice|final.?notice)`) or
+      $e.security_result.action = "BLOCK"
+    )
+
+  condition:
+    $e
+}

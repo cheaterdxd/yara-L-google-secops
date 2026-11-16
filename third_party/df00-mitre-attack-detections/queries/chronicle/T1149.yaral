@@ -1,0 +1,42 @@
+# T1149 — LC_MAIN Hijacking
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting macOS Mach-O binary inspection tool executions where load command enumeration flags (LC_MAIN, LC_THREAD, entryoff) are used against binaries in sensitive system directories.
+# Data Sources: Google Chronicle macOS UDM ingestion, CrowdStrike Falcon Chronicle forwarding, Carbon Black Chronicle integration
+# Required Sources: UDM PROCESS_LAUNCH events (metadata.event_type)
+# False Positives: Apple Developer Tools post-install hooks use install_name_tool to rewrite embedded library paths for applications installed into /Applications, Xcode-integrated build systems invoke otool during linking to verify Mach-O headers and load command integrity for both /usr/bin and /usr/local/bin targets, macOS endpoint detection and response tools that call otool internally to parse binary metadata for file classification and behavioral analytics
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1149
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule lc_main_hijacking_macho_inspection {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Mach-O inspection tools invoked with LC_MAIN or load command flags against sensitive macOS system binary paths, indicating potential entry-point offset reconnaissance for T1149."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1149"
+    platform = "macOS"
+    false_positives = "Developer toolchains, Homebrew, security research"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.metadata.vendor_name = "Apple"
+    (
+      $e.principal.process.file.full_path = /\/(otool|jtool2?|vtool|install_name_tool|lipo)$/ or
+      $e.target.process.file.full_path = /\/(otool|jtool2?|vtool|install_name_tool|lipo)$/
+    )
+    (
+      $e.target.process.command_line = /(\s-l\s|--load-commands|LC_MAIN|LC_THREAD|LC_UNIXTHREAD|entryoff|stacksize)/i
+    )
+    (
+      $e.target.process.command_line = /(\/Applications\/|\/usr\/(local\/)?bin\/|\/usr\/sbin\/|\/bin\/|\/sbin\/|\/opt\/)/
+    )
+
+  condition:
+    $e
+}

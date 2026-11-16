@@ -1,0 +1,62 @@
+# T1567.001 — Exfiltration to Code Repository
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1567.001 exfiltration to code repositories using UDM network and process events.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Chronicle Forwarder (Windows Sysmon), Chronicle Forwarder (EDR telemetry), Google Workspace Activity Logs
+# Required Sources: UDM NETWORK_CONNECTION events, UDM PROCESS_LAUNCH events
+# False Positives: Corporate software development workflows where developers or automated build systems regularly push large compiled binaries, release packages, container image layers, or documentation artifacts to GitHub Releases or GitLab package registry endpoints, Security automation pipelines that use curl or Python scripts to programmatically create GitHub/GitLab issues, upload SARIF vulnerability scan results, or trigger repository webhooks via the REST API with PUT or POST methods, Data engineering teams using repositories to store and version large datasets, ML model checkpoints, or ETL pipeline configurations — Python scripts invoking Git LFS or the GitHub API to upload files may exceed the 512KB threshold legitimately
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1567.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1567_001_exfiltration_to_code_repository {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1567.001 - Exfiltration to Code Repository via git push, large uploads, or REST API file uploads to GitHub, GitLab, Bitbucket, Azure DevOps, or Codeberg"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1567.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1567/001/"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    // Signal 1: Large network transfer to code repository domain from scripting/git process
+    (
+      $e1.metadata.event_type = "NETWORK_CONNECTION"
+      AND $e1.network.direction = "OUTBOUND"
+      AND (
+        $e1.target.hostname = /(?i)(github\.com|api\.github\.com|gitlab\.com|api\.gitlab\.com|bitbucket\.org|api\.bitbucket\.org|dev\.azure\.com|raw\.githubusercontent\.com|gist\.github\.com|codeberg\.org)$/
+      )
+      AND (
+        $e1.principal.process.file.full_path = /(?i)(\\git\.exe|\\curl\.exe|\\wget\.exe|\\python\.exe|\\python3\.exe|\\powershell\.exe|\\pwsh\.exe|\\node\.exe|\\ruby\.exe|\\perl\.exe|^\/(usr\/bin\/|usr\/local\/bin\/|bin\/)(git|curl|wget|python|python3|node|ruby|perl)$)/
+      )
+      AND $e1.network.sent_bytes > 524288
+    )
+    OR
+    // Signal 2: git push to external code repository (process args)
+    (
+      $e2.metadata.event_type = "PROCESS_LAUNCH"
+      AND (
+        $e2.principal.process.file.full_path = /(?i)(\\git\.exe|^\/(usr\/bin\/|usr\/local\/bin\/|bin\/)git$)/
+      )
+      AND $e2.target.process.command_line = /(?i)push/
+      AND $e2.target.process.command_line = /(?i)(github\.com|gitlab\.com|bitbucket\.org|dev\.azure\.com|codeberg\.org)/
+    )
+    OR
+    // Signal 3: REST API upload via scripting tools
+    (
+      $e3.metadata.event_type = "PROCESS_LAUNCH"
+      AND (
+        $e3.principal.process.file.full_path = /(?i)(\\curl\.exe|\\wget\.exe|\\python\.exe|\\python3\.exe|\\powershell\.exe|\\pwsh\.exe|\\node\.exe|\\ruby\.exe)/
+      )
+      AND $e3.target.process.command_line = /(?i)(api\.github\.com|api\.gitlab\.com|api\.bitbucket\.org|gist\.github\.com)/
+      AND $e3.target.process.command_line = /(?i)(-X PUT|-X POST|method=.PUT|method=.POST|requests\.put|requests\.post|Invoke-RestMethod|Invoke-WebRequest|contents|gists|upload)/
+    )
+
+  condition:
+    $e1 or $e2 or $e3
+}

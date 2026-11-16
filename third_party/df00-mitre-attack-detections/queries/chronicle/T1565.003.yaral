@@ -1,0 +1,73 @@
+# T1565.003 — Runtime Data Manipulation
+# Tactic: Impact
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1565.003 Runtime Data Manipulation across four behavioral patterns: process injection into display/document applications, suspicious process handle opening with write access by script interpreters, unsigned DLL loads into document viewer processes from non-standard paths, and unauthorized modification of PDF reader or Office application binaries.
+# Data Sources: Google Chronicle UDM — Windows endpoint telemetry, Chronicle Ingestion: Microsoft Defender for Endpoint, CrowdStrike Falcon, or Sysmon via forwarder
+# Required Sources: UDM events (Chronicle)
+# False Positives: Legitimate enterprise PDF workflow tools that perform in-process rendering transformations using COM automation or OLE, which may trigger process open events, Third-party Office add-ins deployed via Group Policy that are stored in non-standard locations and loaded as unsigned DLLs into winword.exe or excel.exe, Software deployment solutions running as svchost or service-hosted processes that update Adobe or Office binaries and are not included in the allowlist
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1565.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1565_003_runtime_data_manipulation {
+  meta:
+    author = "df00tech"
+    description = "Detects T1565.003 Runtime Data Manipulation via process injection, suspicious DLL loads, or binary tampering targeting display/document applications"
+    mitre_attack_tactic = "Impact"
+    mitre_attack_technique = "T1565.003"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      // CreateRemoteThread or Process Access into display applications
+      (
+        $e.metadata.event_type = "PROCESS_INJECTION"
+        and (
+          $e.target.process.file.full_path = /(?i)(acrord32|acrobat|foxitreader|sumatrapdf|excel|winword|powerpnt|outlook|explorer|mmc|wmplayer)\.exe$/
+        )
+      )
+      or
+      // Suspicious process opening display application with write permissions
+      (
+        $e.metadata.event_type = "PROCESS_OPEN"
+        and (
+          $e.target.process.file.full_path = /(?i)(acrord32|acrobat|foxitreader|excel|winword|outlook)\.exe$/
+        )
+        and (
+          $e.principal.process.file.full_path = /(?i)(powershell|pwsh|cmd|wscript|cscript|mshta|rundll32|regsvr32)\.exe$/
+        )
+      )
+      or
+      // Unexpected DLL load into document viewer (unsigned, non-standard path)
+      (
+        $e.metadata.event_type = "PROCESS_MODULE_LOAD"
+        and (
+          $e.principal.process.file.full_path = /(?i)(acrord32|acrobat|foxitreader|excel|winword)\.exe$/
+        )
+        and not (
+          $e.target.file.full_path = /(?i)(C:\\Windows\\|C:\\Program Files\\Adobe\\|C:\\Program Files\\Foxit\\|C:\\Program Files\\Microsoft Office\\|C:\\Program Files \(x86\)\\Microsoft Office\\)/
+        )
+        and $e.target.file.pe_file.signature_info.signature_algorithm = ""
+      )
+      or
+      // Binary tampering of display application executables
+      (
+        $e.metadata.event_type = "FILE_MODIFICATION"
+        and (
+          $e.target.file.full_path = /(?i)(Program Files\\Adobe|Program Files\\Foxit|Program Files\\Microsoft Office|Program Files \(x86\)\\Microsoft Office)/
+        )
+        and (
+          $e.target.file.full_path = /(?i)\.(exe|dll)$/
+        )
+        and not (
+          $e.principal.process.file.full_path = /(?i)(msiexec|setup|install|trustedinstaller|tiworker|svchost)\.exe$/
+        )
+      )
+    )
+
+  condition:
+    $e
+}

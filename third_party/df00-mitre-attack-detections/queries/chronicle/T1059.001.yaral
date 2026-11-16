@@ -1,0 +1,61 @@
+# T1059.001 — PowerShell
+# Tactic: Execution
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting suspicious PowerShell execution via UDM PROCESS_LAUNCH events.
+# Data Sources: Chronicle UDM events ingested from Microsoft Defender for Endpoint, CrowdStrike Falcon, Carbon Black, or Sysmon via Chronicle forwarder, Windows Event Log ingested via Chronicle Forwarder or BindPlane (EventID 4688 with command line auditing)
+# Required Sources: UDM PROCESS_LAUNCH events (target.process.file.full_path, target.process.command_line)
+# False Positives: Enterprise software deployment tools (SCCM, Intune MDM) that execute PowerShell with -EncodedCommand as part of application installation or configuration enforcement, Legitimate administrative scripts used by help desk or SysAdmin teams that download tooling from internal shares using Net.WebClient or Invoke-WebRequest, Backup and monitoring agents (e.g., Veeam, SolarWinds) running PowerShell with hidden windows and download capabilities during scheduled maintenance tasks
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1059.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1059_001_powershell_suspicious_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious PowerShell execution indicative of MITRE ATT&CK T1059.001 — PowerShell abuse for execution, download cradles, AMSI bypass, and encoded commands."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.001"
+    reference = "https://attack.mitre.org/techniques/T1059/001/"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      $e.target.process.file.full_path = /(?i)\\(powershell|pwsh)\.exe$/ or
+      $e.target.process.file.full_path = /(?i)\/(powershell|pwsh)$/
+    )
+    (
+      $e.target.process.command_line = /(?i)-encodedcommand/ or
+      $e.target.process.command_line = /(?i)-enc\s/ or
+      $e.target.process.command_line = /(?i)-ec\s/ or
+      $e.target.process.command_line = /(?i)invoke-webrequest/ or
+      $e.target.process.command_line = /(?i)iwr\s/ or
+      $e.target.process.command_line = /(?i)invoke-restmethod/ or
+      $e.target.process.command_line = /(?i)net\.webclient/ or
+      $e.target.process.command_line = /(?i)downloadstring/ or
+      $e.target.process.command_line = /(?i)downloadfile/ or
+      $e.target.process.command_line = /(?i)downloaddata/ or
+      $e.target.process.command_line = /(?i)start-bitstransfer/ or
+      $e.target.process.command_line = /(?i)amsiutils/ or
+      $e.target.process.command_line = /(?i)amsiinitfailed/ or
+      $e.target.process.command_line = /(?i)setprotectionlevel/ or
+      $e.target.process.command_line = /(?i)-executionpolicy\s+bypass/ or
+      $e.target.process.command_line = /(?i)-ep\s+bypass/ or
+      $e.target.process.command_line = /(?i)-ep\s+unrestricted/ or
+      $e.target.process.command_line = /(?i)-windowstyle\s+hidden/ or
+      $e.target.process.command_line = /(?i)-w\s+hidden/ or
+      $e.target.process.command_line = /(?i)invoke-expression/ or
+      $e.target.process.command_line = /(?i)iex\(/ or
+      $e.target.process.command_line = /(?i)frombase64string/ or
+      $e.target.process.command_line = /(?i)invoke-mimikatz/ or
+      $e.target.process.command_line = /(?i)invoke-shellcode/ or
+      $e.target.process.command_line = /(?i)io\.compression/
+    )
+
+  condition:
+    $e
+}

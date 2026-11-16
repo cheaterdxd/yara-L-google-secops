@@ -1,0 +1,47 @@
+# T1055.014 — VDSO Hijacking
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting VDSO hijacking attempts by monitoring for processes accessing vdso memory regions or executing ptrace PEEK/POKE and mprotect/mmap syscalls with executable flags, which are the primitive operations required to redirect execution via global offset table patching.
+# Data Sources: Google Chronicle SIEM with Linux endpoint telemetry, Chronicle UDM events from auditd or endpoint agent
+# Required Sources: udm_events
+# False Positives: Security research and reverse engineering workflows legitimately use ptrace PEEK/POKE to inspect process memory, which will match the HIGH severity indicator in non-production environments, Build systems and compilers (gcc, clang) with link-time optimization and profile-guided optimization create and modify executable memory mappings that may trigger the mprotect/mmap indicators, Electron-based applications and Chromium-derived browsers heavily use mprotect with PROT_EXEC for their V8 JIT compiler, generating medium-severity alerts that are expected behavior
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055.014
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule vdso_hijacking_t1055_014 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects VDSO hijacking indicators: suspicious ptrace PEEK/POKE operations or mprotect/mmap with executable flags on Linux endpoints, excluding known legitimate debuggers."
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1055.014"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    created = "2026-04-18"
+    platform = "Linux"
+
+  events:
+    $e.metadata.event_type = "PROCESS_OPEN"
+    $e.target.process.command_line != ""
+    (
+      (
+        re.regex($e.principal.process.file.full_path, `vdso|linux-gate|linux-vdso`) or
+        re.regex($e.target.process.command_line, `vdso|linux-gate|linux-vdso`)
+      )
+      or
+      (
+        re.regex($e.target.process.command_line, `ptrace|mprotect|mmap`) and
+        (
+          re.regex($e.target.process.command_line, `PROT_EXEC|0x[57]\b`) or
+          re.regex($e.principal.process.command_line, `a0=[1245]\s`)
+        )
+      )
+    )
+    not re.regex($e.principal.process.file.full_path, `/(usr/)?(bin|lib)/(gdb|strace|ltrace|valgrind|java|node|dockerd|containerd|ld-linux|libc)`)
+    not re.regex($e.target.process.file.full_path, `/(usr/)?(bin|lib)/(gdb|strace|ltrace|valgrind|java|node|dockerd|containerd|ld-linux|libc)`)
+
+  condition:
+    $e
+}

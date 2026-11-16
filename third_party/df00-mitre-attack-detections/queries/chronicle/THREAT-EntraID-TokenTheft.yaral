@@ -1,0 +1,54 @@
+# THREAT-EntraID-TokenTheft — Microsoft Entra ID Session Token Theft and Replay
+# Tactic: Credential Access, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle (SIEM) that detects Entra ID session token theft and replay.
+# Data Sources: Microsoft Entra ID Sign-In Logs ingested into Google Chronicle via the Entra ID Chronicle ingestion parser
+# Required Sources: USER_LOGIN UDM events from Azure Active Directory log source
+# False Positives: Users on split-tunnel VPNs where IP changes between authenticated requests appear as new geographic locations, Corporate mobility scenarios where employees roam between office Wi-Fi and cellular networks, Automated service accounts or CI/CD pipelines authenticating from multiple cloud regions, Cloud proxy or CASB solutions that rotate egress IPs transparently, Users in border regions whose IP geolocation alternates between two country codes
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/THREAT-EntraID-TokenTheft
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule entra_id_token_theft_replay {
+  meta:
+    author = "df00tech"
+    description = "Detects Entra ID session token theft and replay (AiTM) via impossible travel or MFA downgrade from a new IP"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Credential Access, Lateral Movement"
+    mitre_attack_technique = "T1539, T1550.004"
+    reference = "https://www.microsoft.com/en-us/security/blog/2022/07/12/from-cookie-theft-to-bec/"
+    threat_actors = "Scattered Spider, Storm-0539, Midnight Blizzard"
+
+  events:
+    // First sign-in event (baseline)
+    $signin1.metadata.event_type = "USER_LOGIN"
+    $signin1.metadata.product_name = "Azure Active Directory"
+    $signin1.outcome.result = "SUCCESS"
+    $signin1.principal.user.email_addresses[0] = $user
+    $signin1.principal.ip = $ip1
+    $signin1.principal.location.country_or_region = $loc1
+
+    // Second sign-in event (suspicious)
+    $signin2.metadata.event_type = "USER_LOGIN"
+    $signin2.metadata.product_name = "Azure Active Directory"
+    $signin2.outcome.result = "SUCCESS"
+    $signin2.principal.user.email_addresses[0] = $user
+    $signin2.principal.ip = $ip2
+    $signin2.principal.location.country_or_region = $loc2
+
+    // Temporal ordering and impossible travel conditions
+    $signin2.metadata.event_timestamp.seconds > $signin1.metadata.event_timestamp.seconds
+    ($signin2.metadata.event_timestamp.seconds - $signin1.metadata.event_timestamp.seconds) < 3600
+    ($signin2.metadata.event_timestamp.seconds - $signin1.metadata.event_timestamp.seconds) > 60
+    $ip1 != $ip2
+    $loc1 != $loc2
+
+  match:
+    $user over 1h
+
+  condition:
+    $signin1 and $signin2
+}

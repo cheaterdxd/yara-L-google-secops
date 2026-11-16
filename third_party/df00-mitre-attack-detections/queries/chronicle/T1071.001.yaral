@@ -1,0 +1,47 @@
+# T1071.001 — Web Protocols
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule that triggers when a single source host makes more than 15 outbound TCP connections to the same external destination IP and port on web ports (80, 443, 8080, 8443) within a 1-hour sliding window.
+# Data Sources: Chronicle UDM NETWORK_CONNECTION events, Palo Alto Networks via Chronicle ingestion API, CrowdStrike Falcon via Chronicle forwarder, Google Cloud firewall logs (VPC flow), Zscaler Internet Access via Chronicle connector
+# Required Sources: UDM events with metadata.event_type = NETWORK_CONNECTION
+# False Positives: CDN health probes and edge-node reachability checks performed by load balancers and reverse proxy infrastructure creating high-frequency regular connections to external monitoring and anycast endpoints will easily exceed the 15-connection threshold, Enterprise single sign-on and identity provider integrations (Okta, Azure AD, Ping Identity) making frequent token validation, OCSP, and metadata refresh requests to cloud identity platforms during active user sessions on shared workstations, Streaming media clients and conferencing platforms maintaining active sessions with regular TCP re-establishment or SIP-over-HTTP signaling heartbeats to regional media infrastructure will match the pattern, especially at 60-second keep-alive intervals
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1071.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1071_001_http_https_beaconing {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects HTTP/HTTPS beaconing to external IPs indicative of C2 over web protocols (T1071.001). Counts outbound TCP connections per source host to each unique external destination on web ports within a 1-hour window and alerts when the count exceeds 15."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1071.001"
+    mitre_attack_technique_name = "Application Layer Protocol: Web Protocols"
+    false_positives = "Update agents, telemetry services, monitoring tools, CDN health probes"
+    version = "1.1"
+    created = "2024-01-01"
+
+  events:
+    $net.metadata.event_type = "NETWORK_CONNECTION"
+    $net.network.ip_protocol = "TCP"
+    $net.target.port in (80, 443, 8080, 8443)
+    not re.regex($net.target.ip, `^10\.`)
+    not re.regex($net.target.ip, `^172\.(1[6-9]|2[0-9]|3[01])\.`)
+    not re.regex($net.target.ip, `^192\.168\.`)
+    not re.regex($net.target.ip, `^127\.`)
+    not re.regex($net.target.ip, `^::1$`)
+    not re.regex($net.target.ip, `^fe80:`)
+    $net.principal.ip = $src_ip
+    $net.target.ip = $dst_ip
+    $net.target.port = $dst_port
+    $net.principal.hostname = $hostname
+
+  match:
+    $src_ip, $dst_ip, $dst_port, $hostname over 1h
+
+  condition:
+    #net > 15
+}

@@ -1,0 +1,54 @@
+# T1053.004 — Launchd
+# Tactic: Execution, Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two YARA-L 2.0 Chronicle detection rules for T1053.004.
+# Data Sources: Google Chronicle via CrowdStrike Falcon macOS telemetry, Google Chronicle via Palo Alto Cortex XDR macOS, Google Chronicle via Carbon Black Cloud macOS UDM ingestion
+# Required Sources: UDM Events (FILE_CREATION, PROCESS_LAUNCH)
+# False Positives: MDM solutions such as Jamf Pro or Mosyle executing post-enrollment shell scripts that create plist files in LaunchDaemons as part of managed device configuration., macOS package managers (Homebrew, MacPorts) installing launch agents from zsh or bash during brew install or port install operations, particularly for services like nginx or postgresql., Corporate IT automation scripts using launchctl bootstrap to register network monitoring or endpoint security agents during provisioning workflows.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1053.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1053_004_launchd_plist_by_suspicious_process {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects plist file creation in macOS LaunchDaemon or LaunchAgent directories initiated by a shell, interpreter, or downloader process (T1053.004)"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1053.004"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    re.regex($e.target.file.full_path, `/Library/Launch(Daemons|Agents)/.*\.plist$`)
+    re.regex($e.principal.process.file.full_path, `/(bash|sh|zsh|python3?|ruby|perl|curl|wget|osascript|node)$`)
+    $e.principal.hostname = $hostname
+
+  condition:
+    $e
+}
+
+rule t1053_004_suspicious_launchctl_execution {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects suspicious launchctl load/bootstrap/submit/start commands on macOS from shell or interpreter parents, or targeting staging paths (T1053.004)"
+    mitre_attack_tactic = "Persistence, Privilege Escalation, Execution"
+    mitre_attack_technique = "T1053.004"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex($e.target.process.file.full_path, `/usr/bin/launchctl$`)
+    re.regex($e.target.process.command_line, `\b(load|bootstrap|submit|start)\b`)
+    (
+      re.regex($e.principal.process.file.full_path, `/(bash|sh|zsh|python3?|ruby|perl|curl|wget|osascript|node)$`) or
+      re.regex($e.target.process.command_line, `(/tmp/|/var/tmp/|\.hidden|/Users/Shared/)`)
+    )
+    $e.principal.hostname = $hostname
+
+  condition:
+    $e
+}

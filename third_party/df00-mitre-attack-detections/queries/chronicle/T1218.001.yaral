@@ -1,0 +1,58 @@
+# T1218.001 — Compiled HTML File
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1218.001 CHM file abuse through hh.exe.
+# Data Sources: Google Chronicle UDM (Unified Data Model), Chronicle Endpoint Telemetry via Forwarder, Windows Event Logs ingested via Chronicle Windows Sensor
+# Required Sources: process_launch UDM events
+# False Positives: Enterprise software that bundles help documentation as CHM files and launches hh.exe from application binaries in signed, known-good installation directories, Administrative tooling like Windows AdminPak or RSAT components that programmatically call hh.exe from management consoles with cmd.exe wrappers, Developer workstations running documentation preview tools or CHM authoring software (e.g., HelpSmith, HelpNDoc) that invoke hh.exe as part of normal preview/build operations
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1218_001_chm_hh_exe_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects abuse of hh.exe (HTML Help executable) to execute malicious CHM files — T1218.001. Covers execution from suspicious parent processes (Office/scripting engines), remote CHM loading via HTTP or UNC paths, and hh.exe spawning LOLBin child processes."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1218.001"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    (
+      // Pattern 1: hh.exe with suspicious command-line indicators
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.target.process.file.full_path, `(?i)\\hh\.exe$`)
+      and (
+        re.regex($e1.target.process.command_line, `(?i)(ms-its:|mk:@MSITStore|http://|https://|\\\\[a-zA-Z])`) or
+        re.regex($e1.principal.process.file.full_path, `(?i)(winword|excel|outlook|powerpnt|cmd|wscript|cscript|mshta)\.exe$`)
+      )
+    )
+    or
+    (
+      // Pattern 2: hh.exe spawning suspicious child processes
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.principal.process.file.full_path, `(?i)\\hh\.exe$`)
+      and re.regex($e1.target.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|rundll32|regsvr32|certutil)\.exe$`)
+    )
+
+  match:
+    $e1.principal.hostname over 1h
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e1.principal.process.file.full_path, `(?i)(winword|excel|outlook|powerpnt|wscript|cscript|mshta)\.exe$`), 40, 0) +
+      if(re.regex($e1.target.process.command_line, `(?i)(http://|https://|\\\\[a-zA-Z])`), 40, 0) +
+      if(re.regex($e1.target.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|rundll32|regsvr32|certutil)\.exe$`) and re.regex($e1.principal.process.file.full_path, `(?i)\\hh\.exe$`), 50, 0)
+    )
+    $hostname = $e1.principal.hostname
+    $user = $e1.principal.user.userid
+    $child_process = $e1.target.process.file.full_path
+    $cmdline = $e1.target.process.command_line
+    $parent_process = $e1.principal.process.file.full_path
+
+  condition:
+    $e1
+}

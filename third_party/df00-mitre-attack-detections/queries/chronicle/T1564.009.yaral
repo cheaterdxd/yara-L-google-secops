@@ -1,0 +1,32 @@
+# T1564.009 — Resource Forking
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L rule detecting macOS resource fork and named fork manipulation.
+# Data Sources: macOS Process Events via Chronicle UDM
+# Required Sources: PROCESS_LAUNCH
+# False Positives: Developer build systems (Xcode, CMake, legacy Carbon application compilation) accessing resource forks for legitimate build artifact management targeting older HFS+ workflows on development workstations, macOS migration and backup utilities (Migration Assistant, Carbon Copy Cloner, rsync with -E flag) that intentionally preserve resource forks when transferring files between HFS+ volumes or creating bootable backups, Digital archival and file format compatibility tools (Stuffit Expander, BetterZip) handling legacy Mac OS 9 file formats that stored significant data in resource forks by design, macOS system command dot_clean, which removes leftover resource fork ._ files created when HFS+ volumes are accessed from non-HFS+ systems after copying from USB drives or Windows shares, Third-party endpoint security or antivirus tools that inspect extended attributes including com.apple.ResourceFork as part of file reputation or malware scanning routines
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1564.009
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule macos_resource_fork_abuse {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects macOS resource fork abuse for hiding content (T1564.009)"
+    severity = "HIGH"
+    tactic = "TA0005"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.asset.platform_software.platform = "MAC"
+    (
+      re.regex($e.target.process.command_line, `\.\.\s*namedfork|com\.apple\.ResourceFork|/\.\./namedfork/rsrc`) nocase or
+      (re.regex($e.target.process.file.full_path, `/xattr$`) nocase and
+       re.regex($e.target.process.command_line, `com\.apple\.|HFS`) nocase)
+    )
+
+  condition:
+    $e
+}

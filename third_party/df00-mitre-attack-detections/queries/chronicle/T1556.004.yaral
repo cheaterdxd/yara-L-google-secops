@@ -1,0 +1,52 @@
+# T1556.004 — Network Device Authentication
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that matches USER_LOGIN UDM events from network infrastructure devices identified by hostname regex patterns and vendor/product metadata, groups events over a 1-hour sliding window per (hostname, source IP) pair, and fires on three distinct suspicious conditions: high failure volume (>5 failures/hour indicating credential testing), clean-success anomaly (>5 successes with zero failures indicating a backdoor credential that always works), or multi-user clean-success (3+ distinct users authenticating from one source with no failures, consistent with a shared backdoor credential used across sessions).
+# Data Sources: Chronicle SIEM Forwarder ingesting Cisco IOS/ASA syslog with UDM normalization, Chronicle SIEM Juniper JunOS parser (syslog or API-based ingestion), Chronicle SIEM Palo Alto Networks parser (Panorama or direct device syslog), Chronicle SIEM Fortinet FortiGate parser, UDM normalization pipeline must map authentication outcomes to security_result.action ALLOW/BLOCK and set metadata.event_type to USER_LOGIN
+# Required Sources: USER_LOGIN UDM event type, principal.hostname, principal.ip, principal.user.userid, security_result.action, metadata.product_name, metadata.vendor_name, metadata.event_type
+# False Positives: Chronicle UDM normalization may map TACACS+ proxy pass-through authentication records and direct device login events to the same USER_LOGIN type with the AAA proxy's IP as principal.ip, causing legitimate TACACS infrastructure to appear as a high-success source triggering the clean-success condition., Network devices that emit repeated authentication events for background system processes, SNMP polling authentication, or BGP/routing-protocol peer session re-establishments may produce dense success-only event streams that match the $success_count > 5 and $failure_count = 0 condition., During planned network OS upgrades or bulk configuration pushes via automation pipelines, the management orchestrator may authenticate to dozens of devices per minute from a single IP, and the $unique_users > 3 condition may fire if multiple service accounts are used across the push.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1556_004_network_device_auth_backdoor {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects potential hardcoded backdoor authentication on network devices per T1556.004. Flags devices with more than 5 auth failures per hour or suspicious clean-success auth patterns with zero failures, consistent with SYNful Knock (Cisco IOS) and SLOWPULSE (Pulse Secure) implant behavior."
+    mitre_attack_tactic = "Defense Evasion, Persistence, Credential Access"
+    mitre_attack_technique = "T1556.004"
+    severity = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1556/004/"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    (
+      $e.principal.hostname /(?i)(router|switch|fw|vpn|asa|ios|junos|nexus|palo|fortigate|srx|mx[0-9])/ or
+      $e.metadata.product_name /(?i)(cisco|juniper|palo alto|fortinet|f5|checkpoint)/ or
+      $e.metadata.vendor_name /(?i)(cisco|juniper networks|palo alto networks|fortinet)/
+    )
+    (
+      $e.security_result.action = "ALLOW" or
+      $e.security_result.action = "BLOCK"
+    )
+    $host = $e.principal.hostname
+    $src  = $e.principal.ip
+
+  match:
+    $host, $src over 1h
+
+  outcome:
+    $success_count = count_distinct($e.metadata.id) if $e.security_result.action = "ALLOW"
+    $failure_count = count_distinct($e.metadata.id) if $e.security_result.action = "BLOCK"
+    $unique_users  = count_distinct($e.principal.user.userid)
+
+  condition:
+    $e and (
+      $failure_count > 5
+      or ($success_count > 5 and $failure_count = 0)
+      or ($unique_users > 3 and $success_count > 0 and $failure_count = 0)
+    )
+}

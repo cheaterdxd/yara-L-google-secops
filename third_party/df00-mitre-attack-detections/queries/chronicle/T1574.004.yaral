@@ -1,0 +1,37 @@
+# T1574.004 — Dylib Hijacking
+# Tactic: Persistence, Privilege Escalation, Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting suspicious .dylib file writes in macOS directories associated with dylib hijacking exploitation.
+# Data Sources: macOS Endpoint telemetry via Chronicle forwarder, Google Security Operations (Chronicle) macOS file events
+# Required Sources: UDM Events (FILE_CREATION, FILE_MODIFICATION)
+# False Positives: Legitimate macOS software installers (pkg-based or DMG drag-install) that extract .dylib components to user Library paths during first-run setup, CI/CD pipelines or automated build agents running on macOS that produce .dylib build artifacts in /tmp or /var/folders, macOS system frameworks and OS updates writing or replacing dylibs in paths matched by the user Library pattern
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1574.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule macos_dylib_hijacking_suspicious_path {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects creation or modification of .dylib files in macOS paths commonly abused for dylib hijacking (T1574.004). Covers @rpath-adjacent directories including /tmp, /var/folders, and user Library paths where adversaries plant malicious dynamic libraries."
+    mitre_attack_tactic = "Privilege Escalation, Persistence, Defense Evasion"
+    mitre_attack_technique = "T1574.004"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION" or $e.metadata.event_type = "FILE_MODIFICATION"
+    $e.principal.asset.platform_software.platform = "LINUX"
+    re.regex($e.target.file.full_path, `\.dylib$`)
+    (
+      re.regex($e.target.file.full_path, `^/tmp/`) or
+      re.regex($e.target.file.full_path, `^/private/tmp/`) or
+      re.regex($e.target.file.full_path, `^/var/folders/`) or
+      re.regex($e.target.file.full_path, `^/Users/[^/]+/Library/`) or
+      re.regex($e.target.file.full_path, `^/Users/[^/]+/Library/Application Support/`)
+    )
+
+  condition:
+    $e
+}

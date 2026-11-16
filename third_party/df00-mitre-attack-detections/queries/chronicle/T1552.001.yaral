@@ -1,0 +1,61 @@
+# T1552.001 — Credentials In Files
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule for Google Chronicle that detects adversary credential file hunting by monitoring process launch events involving common credential search tools (findstr, grep, PowerShell Get-ChildItem/Select-String, LaZagne, Mimikatz) with credential-related arguments, and file open events targeting known sensitive credential file paths including SSH keys, AWS/Azure credential files, Windows PowerShell history, and web application configuration files.
+# Data Sources: Google Chronicle UDM, Windows Event Logs (via Chronicle forwarder), EDR telemetry (via Chronicle integration)
+# Required Sources: PROCESS_LAUNCH UDM events, FILE_OPEN UDM events
+# False Positives: Security engineers running authorized credential audits using findstr or PowerShell to locate and inventory credential files for security assessments or hardening exercises, DevOps pipelines and infrastructure-as-code tools that read cloud credential files (.aws/credentials, service account JSON files) during resource provisioning and configuration management, Password manager software and credential management applications that access their own database files and synced credential stores during normal operation
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1552.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1552_001_credentials_in_files {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects adversary searches for credentials stored in files via common enumeration tools and direct access to known credential file locations. Covers T1552.001 - Credentials In Files."
+    mitre_attack_technique = "T1552.001"
+    mitre_attack_tactic = "Credential Access"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1552/001/"
+    created = "2026-04-21"
+
+  events:
+    (
+      // Pattern 1: Credential search tool execution with credential file arguments
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        (
+          re.regex($e1.principal.process.file.full_path, `(?i)(findstr\.exe|grep\.exe)$`)
+          and re.regex($e1.target.process.command_line, `(?i)(password|passwd|credential|unattend|sysprep|web\.config|\.pem|\.pfx|\.ppk|id_rsa)`)
+        )
+        or (
+          re.regex($e1.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe)$`)
+          and re.regex($e1.target.process.command_line, `(?i)(Select-String|Get-ChildItem|Get-Content)`)
+          and re.regex($e1.target.process.command_line, `(?i)(password|credentials|id_rsa|\.pem|\.pfx|\.ppk|accessTokens|logins\.json)`)
+        )
+        or (
+          re.regex($e1.principal.process.file.full_path, `(?i)(cmd\.exe)$`)
+          and re.regex($e1.target.process.command_line, `(?i)dir\s`)
+          and re.regex($e1.target.process.command_line, `(?i)(password|credentials|cred)`)
+        )
+        or re.regex($e1.target.process.command_line, `(?i)(lazagne|mimikatz)`)
+        or re.regex($e1.target.process.file.full_path, `(?i)(lazagne\.exe|mimikatz\.exe)$`)
+      )
+    )
+    or
+    (
+      // Pattern 2: Direct file access to known credential file locations
+      $e1.metadata.event_type = "FILE_OPEN"
+      and (
+        re.regex($e1.target.file.full_path, `(?i)([\\/]\.ssh[\\/]|[\\/]\.aws[\\/]credentials|[\\/]\.azure[\\/]|ConsoleHost_history\.txt|Unattend\.xml|sysprep\.xml|web\.config|applicationHost\.config|[\\/]id_rsa$|[\\/]id_ecdsa$|[\\/]id_ed25519$|accessTokens\.json|credentials\.json|passwords\.txt|creds\.txt|logins\.json)`)
+        or re.regex($e1.target.file.full_path, `(?i)\.(ppk|p12|pfx|pem)$`)
+      )
+      and not re.regex($e1.principal.process.file.full_path, `(?i)(explorer\.exe|OneDrive\.exe|backup\.exe|svchost\.exe|taskhostw\.exe)$`)
+    )
+
+  condition:
+    $e1
+}

@@ -1,0 +1,42 @@
+# T1055 — Process Injection
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule detecting process injection targeting high-value Windows processes.
+# Data Sources: Google Chronicle SIEM, Windows Sysmon (via Chronicle forwarder), Chronicle UDM Events
+# Required Sources: UDM Events
+# False Positives: Hypervisor guest integration tools (VMware Tools, VirtualBox Guest Additions) performing PROCESS_OPEN operations on Windows host processes for memory sharing and clipboard integration, Windows Subsystem for Linux (WSL2) infrastructure components acquiring broad process handles to Windows-side processes for file system and network bridging, Application performance management agents (Dynatrace OneAgent, New Relic) injecting profiling bytecode into monitored processes at runtime, Endpoint protection platforms performing memory forensics via PROCESS_VM_READ on critical processes as part of live incident response or threat hunting workflows
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1055
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1055_process_injection_high_value_target {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects process injection via CreateRemoteThread or high-privilege ProcessAccess targeting critical Windows processes (MITRE ATT&CK T1055)"
+    mitre_attack_tactic = "Defense Evasion, Privilege Escalation"
+    mitre_attack_technique = "T1055"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_INJECTION" OR
+      (
+        $e.metadata.event_type = "PROCESS_OPEN" AND
+        (
+          $e.additional.fields["GrantedAccess"] = /0x1[Ff][0-9A-Fa-f]{4}/ OR
+          $e.additional.fields["GrantedAccess"] = "0x1FFFFF" OR
+          $e.additional.fields["GrantedAccess"] = "0x001F0FFF" OR
+          $e.additional.fields["GrantedAccess"] = "0x143A"
+        )
+      )
+    )
+    NOT $e.principal.process.file.full_path = /(?i)(MsMpEng|csrss|services|svchost|lsass|wmiprvse)\.exe$/
+    $e.target.process.file.full_path = /(?i)(lsass|csrss|winlogon|services|svchost|explorer|spoolsv)\.exe$/
+
+  condition:
+    $e
+}

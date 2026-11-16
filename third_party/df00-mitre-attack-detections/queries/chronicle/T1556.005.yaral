@@ -1,0 +1,48 @@
+# T1556.005 — Reversible Encryption
+# Tactic: Credential Access, Defense Evasion, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting reversible password encryption configuration changes in Active Directory.
+# Data Sources: Windows Event Log (via Chronicle Forwarder), Sysmon (via Chronicle Forwarder), Microsoft Active Directory logs
+# Required Sources: UDM Events (USER_CHANGE, PROCESS_LAUNCH)
+# False Positives: RADIUS/NPS infrastructure changes where administrators intentionally enable reversible encryption to support legacy MS-CHAPv2 VPN or 802.1x wireless authentication, Domain administrator scripts that configure Fine-Grained Password Policies (FGPP) for specific OUs where reversible encryption is a documented business requirement, Privileged Access Workstation (PAW) configuration automation that evaluates and reports AllowReversiblePasswordEncryption states across all domain accounts
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1556.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1556_005_reversible_encryption_ad {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects enabling of AllowReversiblePasswordEncryption on AD accounts via Security Event 4738 or PowerShell AD cmdlets — T1556.005"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1556.005"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    (
+      // Branch 1: Windows Security Event 4738 with reversible encryption UAC flag
+      $e1.metadata.event_type = "USER_CHANGE"
+      and $e1.metadata.product_event_type = "4738"
+      and (
+        re.regex($e1.target.resource.attribute.labels["UserAccountControl"], `(?i)ENCRYPTED_TEXT_PASSWORD_ALLOWED`)
+        or re.regex($e1.metadata.description, `%%2054`)
+        or re.regex($e1.metadata.description, `(?i)ENCRYPTED_TEXT_PASSWORD_ALLOWED`)
+      )
+    )
+    or
+    (
+      // Branch 2: PowerShell process invoking AD reversible encryption cmdlets
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and (
+        re.regex($e1.principal.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`)
+        or re.regex($e1.target.process.file.full_path, `(?i)(powershell|pwsh)\.exe$`)
+      )
+      and re.regex($e1.target.process.command_line, `(?i)(AllowReversiblePasswordEncryption|ENCRYPTED_TEXT_PASSWORD_ALLOWED|Set-ADDefaultDomainPasswordPolicy|New-ADFineGrainedPasswordPolicy)`)
+      and re.regex($e1.target.process.command_line, `(?i)(\$true|\btrue\b|\s1\s|enable)`)
+    )
+
+  condition:
+    $e1
+}

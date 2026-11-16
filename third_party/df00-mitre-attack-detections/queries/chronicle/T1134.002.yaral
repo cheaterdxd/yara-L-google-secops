@@ -1,0 +1,61 @@
+# T1134.002 — Create Process with Token
+# Tactic: Defense Evasion, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1134.002 Create Process with Token through five behavioral branches: AdvancedRun.exe tool usage, runas.exe parent chains, integrity level escalation from scripting engines, cross-account process spawning, and TrustedInstaller command-line abuse.
+# Data Sources: Windows Endpoint telemetry via Chronicle forwarder, Google Chronicle UDM ingestion, Sysmon logs via Chronicle
+# Required Sources: UDM Events (process launch type)
+# False Positives: Legitimate use of Windows runas.exe by helpdesk technicians performing administrative tasks on endpoints using domain admin credentials during change windows., Software update mechanisms for enterprise applications that require elevation through scripting engine wrappers may produce integrity escalation signals on managed endpoints., AdvancedRun.exe used legitimately by IT teams as a diagnostic tool to run processes with specific integrity levels or as a different user for troubleshooting permission issues.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1134.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1134_002_create_process_with_token {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1134.002 Create Process with Token via integrity escalation, account context switching, runas parent, or AdvancedRun.exe abuse"
+    mitre_attack_technique = "T1134.002"
+    mitre_attack_tactic = "Privilege Escalation"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1134/002/"
+    created = "2025-01-01"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.hostname = $hostname
+
+    (
+      // Branch 1: AdvancedRun.exe - NirSoft tool abused for TrustedInstaller-level execution
+      re.regex($e.target.process.file.full_path, `(?i)advancedrun\.exe$`) or
+      re.regex($e.principal.process.file.full_path, `(?i)advancedrun\.exe$`)
+    ) or
+    (
+      // Branch 2: runas.exe as parent spawning unexpected children
+      re.regex($e.principal.process.file.full_path, `(?i)runas\.exe$`) and
+      not re.regex($e.target.process.file.full_path, `(?i)(consent|werfault)\.exe$`)
+    ) or
+    (
+      // Branch 3: Integrity escalation from scripting engine parent
+      $e.target.process.integrity_level_rid in [12288, 16384] and  // High=0x3000, System=0x4000
+      $e.principal.process.integrity_level_rid in [4096, 8192] and // Medium=0x2000, Low=0x1000
+      re.regex($e.principal.process.file.full_path, `(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|msiexec|wmic)\.exe$`) and
+      not re.regex($e.target.process.file.full_path, `(?i)(consent|werfault|dllhost)\.exe$`)
+    ) or
+    (
+      // Branch 4: Account context switch from scripting engine (different user from parent)
+      $e.target.process.access_token.user.userid != $e.principal.process.access_token.user.userid and
+      not re.regex($e.target.process.access_token.user.userid, `(?i)(SYSTEM|LOCAL SERVICE|NETWORK SERVICE)`) and
+      not re.regex($e.principal.process.access_token.user.userid, `(?i)(SYSTEM|LOCAL SERVICE|NETWORK SERVICE)`) and
+      re.regex($e.principal.process.file.full_path, `(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|msiexec|wmic)\.exe$`)
+    ) or
+    (
+      // Branch 5: TrustedInstaller abuse in command line
+      re.regex($e.target.process.command_line, `(?i)trustedinstaller`) and
+      re.regex($e.principal.process.file.full_path, `(?i)(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|msiexec|wmic)\.exe$`)
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,96 @@
+# T1543 — Create or Modify System Process
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three YARA-L 2.0 rules detecting T1543 service persistence: (1) sc.exe or PowerShell service creation, (2) suspicious registry writes to the Services hive (LOLBin ImagePath or autostart entries by non-system processes), (3) sc.exe service creation from Office applications or script interpreters.
+# Data Sources: Google Chronicle UDM, Windows Event Logs via Chronicle Forwarder, Sysmon via Chronicle Forwarder
+# Required Sources: PROCESS_LAUNCH, REGISTRY_MODIFICATION
+# False Positives: Enterprise software deployment pipelines (Intune, SCCM) create services as part of managed application installs — apply reference list exclusions for known MDM/deployment system hostnames and service accounts, Development workstations where developers test service-based applications via PowerShell New-Service — scope detection to production and server asset groups, or reduce severity for developer workstation segments, Backup and recovery software (Veeam, Acronis, Veritas) installs services via MSI with PowerShell wrappers — allowlist known backup agent binary hashes or signing certificate subjects
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1543
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1543_create_modify_system_process {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects creation or modification of Windows system services via sc.exe, PowerShell, or direct registry writes to CurrentControlSet\\Services. Covers LOLBin-based services, suspicious binary paths, and unusual parent process chains."
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1543"
+    mitre_attack_subtechnique = "T1543.003"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    // Branch 1: sc.exe or PowerShell service creation
+    $e1.metadata.event_type = "PROCESS_LAUNCH"
+    $e1.principal.hostname = $hostname
+    (
+      (
+        re.regex($e1.target.process.file.full_path, `(?i)\\sc\.exe$`) and
+        re.regex($e1.target.process.command_line, `(?i)(create|config)`)
+      ) or
+      (
+        re.regex($e1.target.process.file.full_path, `(?i)\\(powershell|pwsh)\.exe$`) and
+        re.regex($e1.target.process.command_line, `(?i)(New-Service|Set-Service)`)
+      )
+    )
+
+  condition:
+    $e1
+}
+
+rule t1543_service_registry_modification {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects suspicious registry modifications to HKLM\\SYSTEM\\CurrentControlSet\\Services including ImagePath set to suspicious locations or LOLBin executables, and autostart (Start=2/0) values written by non-system processes."
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1543"
+    mitre_attack_subtechnique = "T1543.003"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e2.metadata.event_type = "REGISTRY_MODIFICATION"
+    $e2.principal.hostname = $hostname
+    re.regex($e2.target.registry.registry_key, `(?i)HKLM\\SYSTEM\\CurrentControlSet\\Services`)
+    (
+      (
+        $e2.target.registry.registry_value_name = "ImagePath" and
+        (
+          re.regex($e2.target.registry.registry_value_data, `(?i)(\\temp\\|\\appdata\\|\\downloads\\|\\public\\|%temp%|%appdata%)`) or
+          re.regex($e2.target.registry.registry_value_data, `(?i)(powershell\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|regsvr32\.exe|rundll32\.exe|certutil\.exe|bitsadmin\.exe)`)
+        )
+      ) or
+      (
+        $e2.target.registry.registry_value_name = "Start" and
+        $e2.target.registry.registry_value_data in ("2", "0") and
+        not re.regex($e2.principal.process.file.full_path, `(?i)(services\.exe|svchost\.exe|msiexec\.exe|TrustedInstaller\.exe|WmiPrvSE\.exe|MsMpEng\.exe)`)
+      )
+    )
+
+  condition:
+    $e2
+}
+
+rule t1543_service_unusual_parent {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects sc.exe service creation invoked by Office applications or script interpreters, indicating possible macro or script-based lateral movement/persistence."
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1543"
+    mitre_attack_subtechnique = "T1543.003"
+    severity = "CRITICAL"
+    priority = "CRITICAL"
+
+  events:
+    $e3.metadata.event_type = "PROCESS_LAUNCH"
+    $e3.principal.hostname = $hostname
+    re.regex($e3.target.process.file.full_path, `(?i)\\sc\.exe$`)
+    re.regex($e3.target.process.command_line, `(?i)create`)
+    re.regex($e3.principal.process.file.full_path,
+      `(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe)`)
+
+  condition:
+    $e3
+}

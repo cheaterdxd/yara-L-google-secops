@@ -1,0 +1,73 @@
+# T1217 — Browser Information Discovery
+# Tactic: Discovery
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1217 Browser Information Discovery by correlating file access events targeting browser credential and history files initiated by non-browser processes.
+# Data Sources: Chronicle SIEM with Endpoint Detection telemetry, Windows Sysmon forwarded via Chronicle Forwarder (BindPlane), CrowdStrike Falcon via Chronicle SIEM integration, Microsoft Defender for Endpoint via Chronicle MDET integration, Carbon Black Cloud via Chronicle integration
+# Required Sources: UDM events with FILE_OPEN, FILE_CREATION, FILE_COPY, FILE_MODIFICATION event types ingested with principal.process and target.file fields populated
+# False Positives: Enterprise backup solutions integrated with Chronicle telemetry (Cohesity, Rubrik, Veeam) that perform file-level backups covering user profile directories — backup agent process names should be added to the exclusion regex after environment-specific validation, IT provisioning and workstation migration tools that copy or transfer browser profiles during OS refresh, hardware replacement, or domain migration workflows — these generate file copy events across browser data paths at high volume, Security operations tooling performing automated forensic collection of browser artifacts (KAPE, Velociraptor, OSQuery) as part of incident response playbook execution may trigger this rule during active investigations
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1217
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule browser_information_discovery_t1217 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects T1217 Browser Information Discovery: non-browser processes accessing browser credential, history, and session files in known browser profile directories"
+    technique_id = "T1217"
+    tactic = "Discovery"
+    platform = "Windows"
+    severity = "HIGH"
+    confidence = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1217/"
+    version = "1.0"
+
+  events:
+    (
+      $e.metadata.event_type = "FILE_OPEN" or
+      $e.metadata.event_type = "FILE_CREATION" or
+      $e.metadata.event_type = "FILE_COPY" or
+      $e.metadata.event_type = "FILE_MODIFICATION"
+    )
+
+    (
+      re.regex($e.target.file.full_path, `(?i)\\Google\\Chrome\\User Data\\`) or
+      re.regex($e.target.file.full_path, `(?i)\\Microsoft\\Edge\\User Data\\`) or
+      re.regex($e.target.file.full_path, `(?i)\\Mozilla\\Firefox\\Profiles\\`) or
+      re.regex($e.target.file.full_path, `(?i)\\BraveSoftware\\Brave-Browser\\User Data\\`) or
+      re.regex($e.target.file.full_path, `(?i)\\Opera Software\\Opera Stable\\`) or
+      re.regex($e.target.file.full_path, `(?i)\\Vivaldi\\User Data\\`)
+    )
+
+    re.regex($e.target.file.full_path, `(?i)(History|Bookmarks|Login Data|Cookies|Web Data|places\.sqlite|logins\.json|key4\.db|LocalState|Favicons|Visited Links|Extension Cookies|TransportSecurity)`)
+
+    not re.regex($e.principal.process.file.full_path, `(?i)(\\chrome\.exe|\\msedge\.exe|\\firefox\.exe|\\brave\.exe|\\opera\.exe|\\chromium\.exe|\\vivaldi\.exe|\\msedgewebview2\.exe|\\MicrosoftEdge\.exe|\\MsMpEng\.exe|\\SearchIndexer\.exe|\\SgrmBroker\.exe|\\CompatTelRunner\.exe|\\TiWorker\.exe)$`)
+
+    $e.principal.process.file.full_path != ""
+    $e.principal.user.userid = $user
+    $e.principal.hostname = $hostname
+
+  match:
+    $user, $hostname over 1h
+
+  outcome:
+    $risk_score = max(
+      if(re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe)$`), 25, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)(python3?\.exe|pythonw\.exe)$`), 25, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)(7z\.exe|winrar\.exe|zip\.exe|robocopy\.exe|xcopy\.exe|tar\.exe)$`), 25, 0) +
+      if(re.regex($e.principal.process.file.full_path, `(?i)\\(Temp|AppData\\Roaming|Downloads|Public)\\`), 25, 0)
+    )
+    $event_count = count_distinct($e.metadata.id)
+    $target_files = array_distinct($e.target.file.full_path)
+    $initiating_processes = array_distinct($e.principal.process.file.full_path)
+    $browser_targets = array_distinct(
+      if(re.regex($e.target.file.full_path, `(?i)\\Chrome\\`), "Chrome",
+      if(re.regex($e.target.file.full_path, `(?i)\\Edge\\`), "Edge",
+      if(re.regex($e.target.file.full_path, `(?i)(Firefox|places\.sqlite|logins\.json|key4\.db)`), "Firefox",
+      if(re.regex($e.target.file.full_path, `(?i)\\Brave`), "Brave", "Unknown"))))
+    )
+
+  condition:
+    $e
+}

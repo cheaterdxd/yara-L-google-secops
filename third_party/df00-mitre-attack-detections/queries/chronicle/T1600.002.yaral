@@ -1,0 +1,33 @@
+# T1600.002 — Disable Crypto Hardware
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 rule for T1600.002 detection using UDM event types and field matching.
+# Data Sources: Network Device Syslog, Cisco IOS, Juniper JunOS
+# Required Sources: NETWORK_UNCATEGORIZED
+# False Positives: Scheduled network maintenance windows where administrators update crypto engine firmware or replace hardware security modules, Hardware accelerator failures triggering automatic software fallback — the CRYPTO_ENGINE-4-ACCEL_FAIL syslog message may fire during genuine hardware faults, Lab, staging, or development network devices where hardware crypto acceleration is intentionally disabled to reduce cost or simplify testing, Vendor-initiated diagnostic procedures where TAC engineers disable hardware acceleration to isolate performance issues, Automated configuration management tools (Ansible, NAPALM, NSO) pushing approved baseline configurations that include software crypto fallback settings
+# Confidence: medium  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1600.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule detect_weaken_encryption {
+  meta:
+    author = "Argus"
+    description = "Detects cryptographic weakening on network devices"
+    severity = "HIGH"
+    technique = "T1600"
+  events:
+    $e.metadata.event_type = "NETWORK_UNCATEGORIZED"
+    re.regex($e.principal.hostname, `.*`) nocase
+    (
+      re.regex($e.network.application_protocol, `syslog`) or
+      $e.metadata.product_name = "Cisco IOS"
+    )
+    (
+      re.regex($e.network.session_id, `no crypto|encryption des|esp-des|modulus 512|modulus 768|null-encryption|ip ssh version 1|group 1 |group 2 `) nocase or
+      re.regex($e.principal.resource.name, `no crypto|encryption des`) nocase
+    )
+  condition:
+    $e
+}

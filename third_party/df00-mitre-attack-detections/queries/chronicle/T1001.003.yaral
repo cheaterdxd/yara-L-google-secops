@@ -1,0 +1,55 @@
+# T1001.003 — Protocol or Service Impersonation
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting protocol or service impersonation C2 activity by correlating outbound network connections from suspicious Windows LOLBin processes to TLS and HTTP ports commonly abused for FakeTLS and malleable C2 profiles.
+# Data Sources: Chronicle UDM with Windows Sysmon ingestion, Google Chronicle network telemetry, Endpoint Detection and Response (EDR) telemetry via Chronicle
+# Required Sources: UDM NETWORK_CONNECTION events with principal process context
+# False Positives: Windows processes that legitimately host third-party DLLs (svchost.exe hosting plugin DLLs for antivirus or monitoring software) may make outbound HTTPS connections matching the suspicious process criteria — validate by reviewing the hosting service name and DLL path, Scripting engines (wscript.exe, cscript.exe) used by legitimate administrative automation scripts for health checks or monitoring will generate connections to internal or cloud management endpoints — verify script origin and digital signature, certutil.exe used by administrators for legitimate certificate operations or PKI management that involves downloading CRL/OCSP data from public PKI infrastructure will trigger this rule — correlate with planned PKI maintenance windows
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1001.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1001_003_protocol_service_impersonation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects protocol or service impersonation (T1001.003) by identifying suspicious Windows processes making repeated outbound connections to TLS/HTTP ports used in FakeTLS and C2 beaconing. Covers Cobalt Strike malleable C2, SUNBURST-style masquerading, and FakeTLS C2 patterns."
+    mitre_attack_tactic = "Command And Control"
+    mitre_attack_technique = "T1001.003"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.target.port in (443, 8443, 4443, 8080, 8888)
+    not $e.target.ip in cidr(
+      "10.0.0.0/8",
+      "172.16.0.0/12",
+      "192.168.0.0/16",
+      "127.0.0.0/8"
+    )
+    $e.principal.process.file.full_path != /(?i)(chrome\.exe|firefox\.exe|msedge\.exe|iexplore\.exe|teams\.exe|slack\.exe|zoom\.exe|outlook\.exe|onedrive\.exe)$/
+    $e.principal.process.file.full_path = /(?i)(svchost\.exe|lsass\.exe|rundll32\.exe|regsvr32\.exe|mshta\.exe|wscript\.exe|cscript\.exe|msbuild\.exe|installutil\.exe|regasm\.exe|regsvcs\.exe|certutil\.exe|bitsadmin\.exe)$/
+    $hostname = $e.principal.hostname
+    $proc = $e.principal.process.file.full_path
+    $dest_ip = $e.target.ip
+    $dest_port = $e.target.port
+
+  match:
+    $hostname, $proc, $dest_ip, $dest_port over 24h
+
+  outcome:
+    $connection_count = count_distinct($e.metadata.id)
+    $unique_dest_ips = count_distinct($e.target.ip)
+    $total_bytes_sent = sum($e.network.sent_bytes)
+    $first_seen = min($e.metadata.event_timestamp.seconds)
+    $last_seen = max($e.metadata.event_timestamp.seconds)
+    $suspicion_detail = array_distinct($e.principal.process.file.full_path)
+
+  condition:
+    #e >= 3
+}

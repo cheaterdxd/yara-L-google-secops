@@ -1,0 +1,49 @@
+# T1111 — Multi-Factor Authentication Interception
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting MFA fatigue attacks by correlating 5 or more USER_LOGIN events with security_result.action BLOCK (failed/denied authentication) against the same user within a 30-minute match window, followed by at least one successful MFA login with action ALLOW.
+# Data Sources: Azure AD via Chronicle Microsoft 365 ingestion pipeline, Okta via Chronicle Okta log ingestion, Google Workspace via Chronicle Google Workspace ingestion
+# Required Sources: USER_LOGIN UDM event type
+# False Positives: VPN or split-tunneling configurations that delay push notification delivery, causing legitimate users to re-request prompts multiple times before one arrives and is approved, Security awareness training platforms that simulate MFA fatigue scenarios against real accounts in a designated test tenant or sandbox environment, Users with multiple devices enrolled for MFA where each device generates a separate BLOCK event when the notification is dismissed on non-primary devices before approval on the primary
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1111
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule mfa_fatigue_prompt_bombing {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects MFA fatigue / prompt bombing attacks: 5+ failed MFA attempts for a user within 30 minutes followed by a successful MFA authentication. Covers LAPSUS$-style fatigue and AiTM relay scenarios (T1111)."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1111"
+    mitre_attack_technique_name = "Multi-Factor Authentication Interception"
+    false_positives = "Connectivity issues causing repeated timeouts, helpdesk MFA testing, automated test suites"
+    version = "1.0"
+
+  events:
+    $fail.metadata.event_type = "USER_LOGIN"
+    $fail.security_result.action = "BLOCK"
+    (
+      $fail.extensions.auth.auth_details = /(?i)mfa|multi.?factor|otp|push|authenticator/ or
+      $fail.extensions.auth.mechanism = "MECHANISM_OTP" or
+      $fail.metadata.product_name = /(?i)Azure AD|Okta|Google Workspace|Microsoft Entra/
+    )
+    $fail.principal.user.userid = $user
+
+    $success.metadata.event_type = "USER_LOGIN"
+    $success.security_result.action = "ALLOW"
+    (
+      $success.extensions.auth.auth_details = /(?i)mfa|multi.?factor|otp|push|authenticator/ or
+      $success.extensions.auth.mechanism = "MECHANISM_OTP"
+    )
+    $success.principal.user.userid = $user
+
+  match:
+    $user over 30m
+
+  condition:
+    #fail >= 5 and #success >= 1
+}

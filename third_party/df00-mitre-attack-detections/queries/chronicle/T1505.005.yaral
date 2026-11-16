@@ -1,0 +1,58 @@
+# T1505.005 — Terminal Services DLL
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting all four T1505.005 sub-patterns using UDM event model: termsrv.dll file write by non-trusted processes, TermService ServiceDll registry value modification, non-System32 DLL path loading for TermService process, and RDPWrap-specific registry key creation/modification.
+# Data Sources: Google Chronicle SIEM, Windows Sysmon via Chronicle Forwarder, Google Chronicle Unified Data Model (UDM)
+# Required Sources: UDM Events (FILE_MODIFICATION, FILE_CREATION, REGISTRY_MODIFICATION, PROCESS_LAUNCH)
+# False Positives: Legitimate Windows servicing via TrustedInstaller replacing termsrv.dll during cumulative updates — excluded by process name filter; validate against patch deployment schedule, RDPWrap utility legitimately installed and configured by IT teams for multi-session remote access on non-server Windows editions — Pattern 4 will fire; maintain an approved-host exception list, Security tools or EDR agents that monitor or snapshot termsrv.dll and generate file read/write telemetry as part of integrity checking processes
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1505.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1505_005_terminal_services_dll_persistence {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects Terminal Services DLL persistence: termsrv.dll modification, TermService ServiceDll registry tampering, non-System32 DLL loads for TermService, and RDPWrap registry indicators (MITRE T1505.005)"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1505.005"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-20"
+
+  events:
+    (
+      // Pattern 1: termsrv.dll file modification by untrusted process
+      ($e.metadata.event_type = "FILE_MODIFICATION" or $e.metadata.event_type = "FILE_CREATION") and
+      re.regex($e.target.file.full_path, `(?i)termsrv\.dll$`) and
+      not re.regex($e.principal.process.file.full_path, `(?i)(TrustedInstaller|wusa|dism|msiexec|setup|svchost)\.exe$`)
+    ) or
+    (
+      // Pattern 2: TermService ServiceDll registry modification
+      $e.metadata.event_type = "REGISTRY_MODIFICATION" and
+      re.regex($e.target.registry.registry_key, `(?i)TermService.*Parameters`) and
+      re.regex($e.target.registry.registry_value_name, `(?i)ServiceDll`)
+    ) or
+    (
+      // Pattern 3: TermService loading termsrv.dll from non-System32 path
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($e.principal.process.command_line, `(?i)TermService`) and
+      re.regex($e.target.file.full_path, `(?i)termsrv\.dll$`) and
+      not re.regex($e.target.file.full_path, `(?i)\\System32\\`)
+    ) or
+    (
+      // Pattern 4: RDPWrap registry indicators
+      $e.metadata.event_type = "REGISTRY_MODIFICATION" and
+      (
+        re.regex($e.target.registry.registry_key, `(?i)rdpwrap`) or
+        (
+          re.regex($e.target.registry.registry_key, `(?i)TermService`) and
+          re.regex($e.target.registry.registry_key, `(?i)(LogFile|SrvcDllInitRegs)`)
+        )
+      )
+    )
+
+  condition:
+    $e
+}

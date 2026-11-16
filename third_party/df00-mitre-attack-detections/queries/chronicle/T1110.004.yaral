@@ -1,0 +1,45 @@
+# T1110.004 — Credential Stuffing
+# Tactic: Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Google Chronicle YARA-L 2.0 detection rule using the UDM USER_LOGIN event type with security_result.action = BLOCK to match authentication failures.
+# Data Sources: Google Chronicle UDM (Windows Security Events normalized to USER_LOGIN), Azure AD Sign-In Logs (normalized to UDM), Okta System Log (normalized to UDM), LDAP/Active Directory authentication events
+# Required Sources: USER_LOGIN (UDM event type)
+# False Positives: Automated configuration management or CI/CD pipeline agents using a service account pool iterating over many target systems, generating blocked authentication attempts from a shared build server IP before establishing valid sessions on reachable hosts, Authorized penetration testing or red team exercises targeting the organization's own infrastructure — produces the exact pattern this rule detects and must be excluded by source IP allowlist during authorized assessment windows, Legacy ERP or mainframe systems performing nightly batch account validation jobs from a single application server IP, cycling through inactive or expired accounts before locating valid credentials for the batch run
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1110.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1110_004_credential_stuffing {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects credential stuffing: single source IP generating 15+ blocked authentication events against 5+ distinct target accounts within 1 hour"
+    mitre_attack_tactic = "Credential Access"
+    mitre_attack_technique = "T1110.004"
+    mitre_attack_url = "https://attack.mitre.org/techniques/T1110/004/"
+    severity = "HIGH"
+    confidence = "HIGH"
+    rule_version = "1.0"
+
+  events:
+    $fail.metadata.event_type = "USER_LOGIN"
+    $fail.security_result.action = "BLOCK"
+    $fail.principal.ip = $src_ip
+    not re.regex($src_ip, `^(127\.0\.0\.1|::1|0\.0\.0\.0)$`)
+    $fail.target.user.userid != ""
+    $fail.target.user.userid = $target_user
+
+  match:
+    $src_ip over 1h
+
+  outcome:
+    $failure_count = count_distinct($fail.metadata.id)
+    $unique_accounts = count_distinct($fail.target.user.userid)
+    $account_sample = array_distinct($fail.target.user.userid)
+    $target_hosts = array_distinct($fail.target.hostname)
+
+  condition:
+    #fail >= 15 and
+    $unique_accounts >= 5
+}

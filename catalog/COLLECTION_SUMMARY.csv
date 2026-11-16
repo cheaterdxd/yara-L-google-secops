@@ -1,0 +1,20 @@
+metric,value,notes
+rule_index_entries,4341,Unique indexed local paths
+repository_snapshots,36,Repositories with indexed files
+byte_distinct_contents,2732,Computed from local file bytes
+gcp_manifest_entries,80,GCP manifest rows
+gcp_unique_sha256,80,GCP byte-unique rule contents
+license:Apache-2.0,2959,RULE_INDEX.csv value
+license:GPL-3.0,303,RULE_INDEX.csv value
+license:MIT,1078,RULE_INDEX.csv value
+license:Unlicense,1,RULE_INDEX.csv value
+content_type:detection_rule,4314,RULE_INDEX.csv value
+content_type:saved_search,4,RULE_INDEX.csv value
+content_type:validation_fixture,23,RULE_INDEX.csv value
+gcp_source:GoogleCloudPlatform/secops-toolkit,1,GCP_RULE_INDEX.csv source_repository
+gcp_source:GoogleCloudPlatform/security-analytics,13,GCP_RULE_INDEX.csv source_repository
+gcp_source:SofectaLabs/gcp-chronicle-detection-rules,19,GCP_RULE_INDEX.csv source_repository
+gcp_source:chronicle/detection-rules,24,GCP_RULE_INDEX.csv source_repository
+gcp_source:jimenezulises/gcp-agentic-ai-security-lab,1,GCP_RULE_INDEX.csv source_repository
+gcp_source:lopes/graft,2,GCP_RULE_INDEX.csv source_repository
+gcp_source:rowham/chronicle-detection-rules,20,GCP_RULE_INDEX.csv source_repository

@@ -1,0 +1,54 @@
+# T1027.002 — Software Packing
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting software packing (T1027.002) across three UDM event types.
+# Data Sources: Chronicle UDM via Google Security Operations ingestion, Sysmon events forwarded to Chronicle via Bindplane Agent or Chronicle Forwarder, Google Chronicle Endpoint Detection (GCTI)
+# Required Sources: UDM events: PROCESS_LAUNCH, FILE_CREATION, PROCESS_MODULE_LOAD
+# False Positives: Security vendors that protect their agent DLLs with Themida or VMProtect for tamper resistance — endpoint agents from these vendors will trigger module load signals at startup on every managed host across the fleet., Open-source software projects with automated UPX compression in their release CI pipeline — build artifacts written to temp directories before packaging will match the FILE_CREATION signal if the build agent runs on a managed endpoint., Malware analysts running packer tools against samples in Chronicle-instrumented analysis VMs — workstations in dedicated sandbox OUs or network segments should be excluded from this rule scope.
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule software_packing_t1027_002 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects known software packing tool execution and packed PE file creation — MITRE T1027.002 Defense Evasion"
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1027.002"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    (
+      /* Signal 1: Direct packer tool execution — mirrors KQL packer process join */
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      re.regex($e.target.process.file.full_path,
+        `(?i)(upx|themida|vmprotect|mpress|enigma|obsidium|asprotect|pecompact)\.exe$`) and
+      not re.regex($e.principal.process.file.full_path,
+        `(?i)^[Cc]:\\(Windows|Program Files)`)
+    ) or
+    (
+      /* Signal 2: PE written to temp/download path by packer process — mirrors KQL FileCreated join */
+      $e.metadata.event_type = "FILE_CREATION" and
+      re.regex($e.target.file.full_path,
+        `(?i)\\(Temp|Downloads|AppData\\Roaming|AppData\\Local\\Temp)\\`) and
+      re.regex($e.target.file.full_path, `(?i)\.(exe|dll)$`) and
+      re.regex($e.principal.process.file.full_path,
+        `(?i)(upx|themida|vmprotect|mpress|enigma)\.exe$`)
+    ) or
+    (
+      /* Signal 3: Packer-named module loaded by non-system process — mirrors SPL EventCode=7 */
+      $e.metadata.event_type = "PROCESS_MODULE_LOAD" and
+      re.regex($e.target.file.full_path,
+        `(?i)(upx|themida|vmprotect|mpress|enigma)`) and
+      not re.regex($e.principal.process.file.full_path,
+        `(?i)^[Cc]:\\(Windows|Program Files)`)
+    )
+
+  condition:
+    $e
+}

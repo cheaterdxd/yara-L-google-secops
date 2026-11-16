@@ -1,0 +1,52 @@
+# T1546.017 — Udev Rules
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting creation or modification of .rules files within udev rules directories (/etc/udev/rules.d/, /lib/udev/rules.d/, /usr/lib/udev/rules.d/, /run/udev/rules.d/) by processes not matching known package managers or configuration management tools.
+# Data Sources: Google Chronicle UDM, Linux endpoint telemetry via Chronicle forwarder, GCP Chronicle Security Operations
+# Required Sources: UDM Events: FILE_CREATION, FILE_MODIFICATION, PROCESS_LAUNCH
+# False Positives: Legitimate hardware driver or firmware package installation via apt, dpkg, rpm, or yum that writes udev rules as part of device support setup, System administrators or DevOps engineers manually writing udev rules for device naming, permissions, or event-triggered automount configurations, Configuration management automation (Ansible, Puppet, Chef, SaltStack) deploying udev rules as part of approved system configuration baselines
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.017
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule udev_rules_persistence_t1546_017 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects creation or modification of udev rules files by non-package-manager processes, or suspicious udevadm invocations. Adversaries may use udev rules for persistent root-level code execution (T1546.017)."
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1546.017"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    (
+      (
+        $e.metadata.event_type = "FILE_CREATION" or
+        $e.metadata.event_type = "FILE_MODIFICATION"
+      ) and
+      (
+        $e.target.file.full_path = /\/etc\/udev\/rules\.d\/.+\.rules/ or
+        $e.target.file.full_path = /\/lib\/udev\/rules\.d\/.+\.rules/ or
+        $e.target.file.full_path = /\/usr\/lib\/udev\/rules\.d\/.+\.rules/ or
+        $e.target.file.full_path = /\/run\/udev\/rules\.d\/.+\.rules/
+      ) and
+      not $e.principal.process.file.full_path = /\/(usr\/bin|bin)\/(apt|apt-get|dpkg|rpm|yum|dnf|zypper|ansible|puppet|chef-client|salt-minion)/
+    )
+    or
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      $e.target.process.file.full_path = /\/.*udevadm/ and
+      (
+        $e.target.process.command_line = /trigger/ or
+        $e.target.process.command_line = /settle/ or
+        $e.target.process.command_line = /reload/ or
+        $e.target.process.command_line = /control/
+      ) and
+      not $e.principal.process.file.full_path = /\/(usr\/bin|bin)\/(apt|apt-get|dpkg|rpm|yum|dnf|zypper|systemd|udevd)/
+    )
+
+  condition:
+    $e
+}

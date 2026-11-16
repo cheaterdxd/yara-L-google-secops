@@ -1,0 +1,47 @@
+# T1546.003 — Windows Management Instrumentation Event Subscription
+# Tactic: Privilege Escalation, Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule that detects WMI event subscription persistence (T1546.003) across three telemetry paths: process launch events where the command line matches WMI subscription class keywords (ActiveScriptEventConsumer, CommandLineEventConsumer, __EventFilter, __EventConsumer, __FilterToConsumerBinding, subscription namespace paths); direct WMI-Activity and Sysmon product event IDs 19, 20, 21, 5857, and 5861 which correspond to subscription filter creation, consumer creation, binding creation, provider load, and permanent subscription registration; and file creation or modification events targeting WBEM repository files (OBJECTS.DATA, index.btr, mapping) which persist subscription definitions across reboots.
+# Data Sources: Microsoft Windows Sysmon via Chronicle forwarder, Microsoft-Windows-WMI-Activity Operational, Google Chronicle UDM ingestion
+# Required Sources: UDM Events
+# False Positives: Windows Defender Advanced Threat Protection and Microsoft Sentinel agent installation registers WMI consumers for real-time telemetry — these will generate EventID 20 and 21 on managed endpoints and should be filtered by the installer process chain (MsSense.exe, MMASetup.exe), Enterprise software deployment platforms (Ivanti, Flexera, BigFix) use WMI event subscriptions to monitor software inventory changes and trigger compliance actions — correlate against known deployment server FQDNs in the principal.hostname field, Windows operating system updates and service pack installations can modify WBEM repository files (OBJECTS.DATA) during component registration — suppress alerts on file modification events occurring during known patch maintenance windows
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1546.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule wmi_event_subscription_persistence {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects WMI event subscription persistence (T1546.003) via subscription class creation, Sysmon WMI events, and WBEM repository file modifications"
+    severity = "HIGH"
+    mitre_attack_technique = "T1546.003"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    reference = "https://attack.mitre.org/techniques/T1546/003/"
+
+  events:
+    (
+      $e.metadata.event_type = "PROCESS_LAUNCH" and
+      (
+        $e.target.process.command_line = /(?i)(ActiveScriptEventConsumer|CommandLineEventConsumer|__EventFilter|__EventConsumer|__FilterToConsumerBinding|ROOT[\\|/]subscription|root[\\|/]subscription)/ or
+        $e.metadata.product_event_type = "19" or
+        $e.metadata.product_event_type = "20" or
+        $e.metadata.product_event_type = "21" or
+        $e.metadata.product_event_type = "5857" or
+        $e.metadata.product_event_type = "5861"
+      )
+    ) or
+    (
+      $e.metadata.event_type = "FILE_CREATION" and
+      $e.target.file.full_path = /(?i)(\\wbem\\|\\repository\\)/ and
+      (
+        $e.target.file.full_path = /(?i)OBJECTS\.DATA/ or
+        $e.target.file.full_path = /(?i)index\.btr/ or
+        $e.target.file.full_path = /(?i)mapping/
+      )
+    )
+
+  condition:
+    $e
+}

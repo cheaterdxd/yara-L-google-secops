@@ -1,0 +1,45 @@
+# T1588.003 — Code Signing Certificates
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule matching UDM PROCESS_LAUNCH events where the executed binary resides in a user-writable directory and carries an anomalous Authenticode result.
+# Data Sources: Google Chronicle with Windows Sysmon forwarding via Chronicle Forwarder or BindPlane, Chronicle Unified Data Model PROCESS_LAUNCH events with Authenticode enrichment enabled, Chronicle Windows Event Log parser (UDM target.file.authenticode.* fields)
+# Required Sources: UDM events stream (metadata.event_type = PROCESS_LAUNCH)
+# False Positives: Enterprise applications deployed via user-profile-based software delivery mechanisms where the signing certificate chain includes an intermediate CA that Chronicle's UDM Authenticode enrichment cannot fully resolve to a known trusted root, causing trusted_by_os to be populated as false, Legitimate portable executables downloaded and run directly from the Downloads folder — particularly open-source tooling and utilities from smaller ISVs — where the signer name does not match any entry in the known-publisher exclusion regex, SOC analysts or IR responders executing signed forensic tools (Sysinternals, Velociraptor, KAPE) directly from their own Downloads or Desktop folders during incident investigation activities on monitored endpoints
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1588.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1588_003_suspicious_cert_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects signed executables with anomalous certificate status (revoked, expired, invalid, untrusted root) executing from user-writable paths — T1588.003"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1588.003"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    reference = "https://attack.mitre.org/techniques/T1588/003/"
+    created = "2024-01-01"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    re.regex(
+      $e.target.process.file.full_path,
+      `(?i)(\\AppData\\|\\Temp\\|\\Downloads\\|\\Users\\Public\\|\\ProgramData\\)`
+    )
+    (
+      $e.target.file.authenticode.trusted_by_os = false
+      or $e.target.file.authenticode.result = "SIGNATURE_EXPIRED"
+      or $e.target.file.authenticode.result = "SIGNATURE_REVOKED"
+      or $e.target.file.authenticode.result = "SIGNATURE_UNTRUSTED_ROOT"
+      or $e.target.file.authenticode.result = "SIGNATURE_INVALID"
+    )
+    not re.regex(
+      $e.target.file.authenticode.signer,
+      `(?i)(Microsoft Corporation|Microsoft Windows|Google LLC|Adobe Inc|Oracle America|Intel Corporation|NVIDIA|Cisco Systems|VMware|Apple Inc|Amazon\.com)`
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,105 @@
+# T1056 — Input Capture
+# Tactic: Collection, Credential Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Five Chronicle YARA-L 2.0 rules for T1056 Input Capture: individual rules for Network Provider DLL registration (NPPSPY), suspicious non-system DLL loads into winlogon/lsass/credui, process creation with input capture API strings or known keylogger filenames, and remote thread injection into credential processes.
+# Data Sources: Google Chronicle SIEM, Chronicle Unified Data Model (UDM), Windows endpoint telemetry via Chronicle forwarders, Sysmon events forwarded to Chronicle
+# Required Sources: UDM events with event_type: REGISTRY_MODIFICATION, PROCESS_MODULE_LOAD, PROCESS_LAUNCH, PROCESS_INJECTION
+# False Positives: EDR sensor updates or configuration changes trigger NetworkProvider registry modifications during agent installation rollouts, Windows Defender Credential Guard configuration writes to NetworkProvider keys during Virtualization-Based Security setup, Legitimate software installers (VPN clients, network authentication agents) register Network Provider DLLs, often via child processes other than msiexec, Third-party authentication solutions (smart card middleware, biometric login software) load DLLs into LogonUI.exe during credential provider initialization, Security research VMs with Sysmon instrumentation may generate false positives from debugging tools that load DLLs into system processes
+# Confidence: high  Severity: critical
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1056
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1056_input_capture_network_provider_registration {
+  meta:
+    author = "df00tech"
+    description = "Detects Network Provider DLL registration (NPPSPY technique) — T1056 Input Capture"
+    mitre_attack_tactic = "Collection, Credential Access"
+    mitre_attack_technique = "T1056"
+    severity = "HIGH"
+    priority = "HIGH"
+  events:
+    $reg.metadata.event_type = "REGISTRY_MODIFICATION"
+    (
+      re.regex($reg.target.registry.registry_key, `(?i).*SYSTEM\\CurrentControlSet\\Control\\NetworkProvider\\Order.*`)
+      or re.regex($reg.target.registry.registry_key, `(?i).*SYSTEM\\CurrentControlSet\\Services\\.*\\NetworkProvider.*`)
+    )
+    not re.regex($reg.principal.process.file.full_path, `(?i).*(services\.exe|svchost\.exe|msiexec\.exe|TrustedInstaller\.exe)$`)
+  condition:
+    $reg
+}
+
+rule t1056_input_capture_suspicious_dll_in_credential_process {
+  meta:
+    author = "df00tech"
+    description = "Detects suspicious non-system DLL loaded into credential/authentication processes — T1056 Input Capture"
+    mitre_attack_tactic = "Collection, Credential Access"
+    mitre_attack_technique = "T1056"
+    severity = "HIGH"
+    priority = "HIGH"
+  events:
+    $load.metadata.event_type = "PROCESS_MODULE_LOAD"
+    re.regex($load.principal.process.file.full_path, `(?i).*(winlogon\.exe|lsass\.exe|LogonUI\.exe|consent\.exe|credui\.exe)$`)
+    not re.regex($load.target.process.file.full_path, `(?i)^(C:\\Windows\\System32\\|C:\\Windows\\SysWOW64\\|C:\\Program Files\\|C:\\Program Files \(x86\)\\).*`)
+    re.regex($load.target.process.file.full_path, `(?i)\.dll$`)
+  condition:
+    $load
+}
+
+rule t1056_input_capture_api_or_tool {
+  meta:
+    author = "df00tech"
+    description = "Detects process creation referencing input capture APIs or known keylogger tool names — T1056 Input Capture"
+    mitre_attack_tactic = "Collection, Credential Access"
+    mitre_attack_technique = "T1056"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+  events:
+    $proc.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      re.regex($proc.target.process.command_line, `(?i).*(SetWindowsHookEx|GetAsyncKeyState|GetKeyState|WH_KEYBOARD_LL|WH_MOUSE_LL|pyWinhook|pynput|Get-Clipboard|keyboard\.hook|InputCapture).*`)
+      or re.regex($proc.target.process.file.full_path, `(?i).*(keylog|keyscan|hookdll|inputcap|credcap).*`)
+    )
+  condition:
+    $proc
+}
+
+rule t1056_input_capture_remote_thread_credential_process {
+  meta:
+    author = "df00tech"
+    description = "Detects remote thread injection into credential and logon UI processes — T1056 Input Capture"
+    mitre_attack_tactic = "Defense Evasion, Credential Access"
+    mitre_attack_technique = "T1056"
+    severity = "CRITICAL"
+    priority = "CRITICAL"
+  events:
+    $inj.metadata.event_type = "PROCESS_INJECTION"
+    re.regex($inj.target.process.file.full_path, `(?i).*(winlogon\.exe|LogonUI\.exe|credui\.exe|consent\.exe)$`)
+  condition:
+    $inj
+}
+
+rule t1056_input_capture_compound_signal {
+  meta:
+    author = "df00tech"
+    description = "Compound rule: correlated Input Capture signals on same host within 1 hour — T1056 Input Capture high-confidence"
+    mitre_attack_tactic = "Collection, Credential Access"
+    mitre_attack_technique = "T1056"
+    severity = "CRITICAL"
+    priority = "CRITICAL"
+  events:
+    $reg.metadata.event_type = "REGISTRY_MODIFICATION"
+    re.regex($reg.target.registry.registry_key, `(?i).*NetworkProvider.*`)
+    not re.regex($reg.principal.process.file.full_path, `(?i).*(services\.exe|svchost\.exe|msiexec\.exe|TrustedInstaller\.exe)$`)
+
+    $load.metadata.event_type = "PROCESS_MODULE_LOAD"
+    re.regex($load.principal.process.file.full_path, `(?i).*(winlogon\.exe|lsass\.exe|LogonUI\.exe)$`)
+    not re.regex($load.target.process.file.full_path, `(?i)^C:\\Windows\\.*`)
+
+    $reg.principal.hostname = $load.principal.hostname
+  match:
+    $reg.principal.hostname over 1h
+  condition:
+    $reg and $load
+}

@@ -1,0 +1,80 @@
+# T1053.005 — Scheduled Task
+# Tactic: Execution, Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two complementary YARA-L 2.0 rules for detecting Windows Scheduled Task abuse (T1053.005).
+# Data Sources: Google Chronicle UDM via Windows Event Forwarding (WEF), Sysmon logs forwarded to Chronicle (Event ID 1 - Process Create, Event ID 12/13 - Registry), Windows Security Event Log via Chronicle ingestion (Event ID 4688, 4698, 4702), Chronicle Endpoint Detection sensor
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH, UDM events with metadata.event_type = REGISTRY_MODIFICATION
+# False Positives: Legitimate software installation processes that register scheduled tasks via PowerShell or script engines as part of their setup routines — particularly common with enterprise software suites., System management tools (SCCM, Group Policy) that write directly to the Task Scheduler registry keys to deploy tasks across managed endpoints., Security software such as EDR agents and antivirus solutions that create high-frequency scheduled tasks for signature updates or health telemetry, potentially triggering the /sc minute or /sc hourly indicators., Developer workstations where build tools (MSBuild) or automation frameworks invoke schtasks.exe as part of CI pipeline test fixtures or developer environment setup scripts.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1053.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule mitre_t1053_005_scheduled_task_abuse {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects Windows Scheduled Task abuse via schtasks.exe with suspicious arguments or parent processes, and direct Task Scheduler registry manipulation (T1053.005)"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence, Privilege Escalation"
+    mitre_attack_technique = "T1053.005"
+    reference = "https://attack.mitre.org/techniques/T1053/005/"
+    platform = "Windows"
+    version = "1.0"
+    created = "2026-04-16"
+
+  events:
+    // Match schtasks.exe process creation events
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path = /(?i)schtasks\.exe$/
+    (
+      // Branch 1: Suspicious schtasks arguments — create or change with indicators
+      (
+        (
+          re.regex($e.target.process.command_line, `(?i)/create|/change`)
+        )
+        and
+        (
+          re.regex($e.target.process.command_line, `(?i)\\AppData\\|\\Temp\\|\\ProgramData\\|\\Public\\|%temp%|%appdata%|%public%`) or
+          re.regex($e.target.process.command_line, `(?i)cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|msbuild\.exe|wmic\.exe|msiexec\.exe`) or
+          re.regex($e.target.process.command_line, `(?i)/ru\s+(system|"system"|"nt authority\\system")`) or
+          re.regex($e.target.process.command_line, `(?i)/s\s+`) or
+          re.regex($e.target.process.command_line, `(?i)/sc\s+(onlogon|onstartup|onstart)`) or
+          re.regex($e.target.process.command_line, `(?i)/sc\s+(minute|hourly)`)
+        )
+      )
+      or
+      // Branch 2: Suspicious parent process spawning schtasks
+      re.regex($e.principal.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|msiexec\.exe|wmic\.exe|winword\.exe|excel\.exe|outlook\.exe|acrord32\.exe|msedge\.exe|chrome\.exe|firefox\.exe)$`)
+    )
+
+    $e.principal.hostname = $hostname
+
+  condition:
+    $e
+}
+
+rule mitre_t1053_005_scheduled_task_registry_manipulation {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects unauthorized Task Scheduler registry writes to TaskCache key, indicating hidden or programmatically created scheduled tasks (T1053.005)"
+    severity = "MEDIUM"
+    priority = "MEDIUM"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1053.005"
+    reference = "https://attack.mitre.org/techniques/T1053/005/"
+    platform = "Windows"
+    version = "1.0"
+    created = "2026-04-16"
+
+  events:
+    $r.metadata.event_type = "REGISTRY_MODIFICATION"
+    re.regex($r.target.registry.registry_key, `(?i)\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Schedule\\TaskCache\\`)
+    not re.regex($r.principal.process.file.full_path, `(?i)(svchost\.exe|taskeng\.exe|taskhostw\.exe)$`)
+
+    $r.principal.hostname = $hostname
+
+  condition:
+    $r
+}

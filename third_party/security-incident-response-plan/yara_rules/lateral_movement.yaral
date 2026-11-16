@@ -1,0 +1,59 @@
+rule lateral_movement_detection {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects lateral movement: SMB enumeration, NTLM relay/pass-the-hash patterns, and RDP connections from anomalous source hosts"
+    severity = "HIGH"
+    priority = "P1"
+    mitre_tactic = "Lateral Movement"
+    mitre_technique = "T1550"
+    mitre_subtechnique = "T1550.002"
+    reference = "https://attack.mitre.org/techniques/T1550/002/"
+    additional_techniques = "T1021.001, T1021.002, T1557.001"
+    created = "2024-01-15"
+    version = "1.4"
+
+  events:
+    $lateral.metadata.event_type = "NETWORK_CONNECTION"
+    $lateral.principal.hostname = $source_host
+    $lateral.target.hostname = $dest_host
+    $lateral.principal.hostname != $lateral.target.hostname
+    (
+      (
+        $lateral.network.application_protocol = "SMB" and
+        $lateral.network.destination_port = 445 and
+        (
+          $lateral.target.process.command_line = /net\s+(view|use|session)/i or
+          $lateral.target.process.command_line = /enum4linux/i or
+          $lateral.network.sent_bytes > 0
+        )
+      ) or
+      (
+        $lateral.network.application_protocol = "RDP" and
+        $lateral.network.destination_port = 3389 and
+        $lateral.principal.ip = $rdp_source_ip
+      ) or
+      (
+        $lateral.metadata.product_event_type = "NTLM_AUTHENTICATION" and
+        $lateral.extensions.auth.auth_type = "NTLM" and
+        $lateral.security_result.description = /relay|pass.the.hash|pth/i
+      )
+    )
+
+  match:
+    $source_host over 10m
+
+  condition:
+    #lateral >= 3
+
+  outcome:
+    $risk_score = max(90)
+    $pivot_source = $source_host
+    $pivot_destinations = array_distinct($dest_host)
+    $connection_count = count($lateral.metadata.id)
+    $protocols_used = array_distinct($lateral.network.application_protocol)
+    $destination_ports = array_distinct($lateral.network.destination_port)
+    $severity_label = "HIGH"
+    $playbook = "lateral_movement_response"
+    $ioc_type = "hostname"
+    $containment_action = "isolate_host"
+}

@@ -1,0 +1,42 @@
+# T1027.004 — Compile After Delivery
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting compile-after-delivery by matching PROCESS_LAUNCH events where a compiler binary is invoked by a script interpreter (PowerShell, WScript, CScript, MSHTA) and the command line references user-writable paths.
+# Data Sources: Google Chronicle UDM (Windows Endpoint), Sysmon forwarded via Chronicle Forwarder, Microsoft Defender for Endpoint via Chronicle integration
+# Required Sources: UDM events (PROCESS_LAUNCH)
+# False Positives: Developer workstations with Visual Studio Code remote extensions that invoke csc.exe via integrated terminal (PowerShell parent) with workspace files under user AppData, Managed enterprise build agents (Azure Pipelines, Jenkins) running on developer hardware where msbuild is invoked by PowerShell bootstrap scripts, Security tooling such as BloodHound, Covenant, or Cobalt Strike simulators used in authorized red team exercises that compile payloads on endpoint
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1027.004
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1027_004_compile_after_delivery {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1027.004 Compile After Delivery - compiler binaries executing with source from user-writable paths, spawned by script interpreters"
+    mitre_attack_technique = "T1027.004"
+    mitre_attack_tactic = "Defense Evasion"
+    severity = "HIGH"
+    confidence = "HIGH"
+    created = "2026-04-13"
+    reference = "https://attack.mitre.org/techniques/T1027/004/"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)(csc\.exe|vbc\.exe|ilasm\.exe|msbuild\.exe|jsc\.exe|cl\.exe|rc\.exe|mc\.exe|\bgcc\b|\bg\+\+\b)/
+    (
+      $e.target.process.command_line = /(?i)(\\temp\\|\\appdata\\|\\downloads\\|\\users\\[^\\]+\\desktop)/
+      or $e.target.process.file.full_path = /(?i)(\\temp\\|\\appdata\\|\\downloads\\)/
+    )
+    not $e.target.process.command_line = /(?i)(\\windows\\winsxs\\|visual studio|devenv|vstudio)/
+    $e.principal.process.file.full_path = /(?i)(powershell\.exe|wscript\.exe|cscript\.exe|mshta\.exe|cmd\.exe|wmic\.exe|python\.exe)/
+    $hostname = $e.principal.hostname
+    $user = $e.principal.user.userid
+
+  match:
+    $hostname, $user over 10m
+
+  condition:
+    #e >= 1
+}

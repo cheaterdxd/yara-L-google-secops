@@ -1,0 +1,37 @@
+# T1213.002 — Sharepoint
+# Tactic: Collection
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: YARA-L 2.0 rule detecting bulk SharePoint file access sessions in Chronicle UDM.
+# Data Sources: Microsoft 365 UDM Events
+# Required Sources: USER_RESOURCE_ACCESS
+# False Positives: SharePoint site migrations or bulk content audits performed by IT administrators accessing large numbers of files in a short window, Automated backup or archiving tools (e.g., AvePoint, ShareGate, Veeam for Microsoft 365) that enumerate and download SharePoint content on a schedule, SharePoint crawlers and search indexers used by enterprise search products (Coveo, Microsoft Search, Elastic Workplace Search) that systematically access all content, Legal hold or eDiscovery processing tools (Purview, Nuix, Exterro) that access large document sets during compliance reviews, Power Automate flows or Logic Apps that process SharePoint file libraries at high volume for business automation workflows
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1213.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule sharepoint_bulk_collection {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects bulk SharePoint data collection activity (T1213.002)"
+    severity = "HIGH"
+    tactic = "TA0009"
+
+  events:
+    $e.metadata.event_type = "USER_RESOURCE_ACCESS"
+    $e.metadata.product_name = "Office 365"
+    $e.target.application = "SharePoint"
+    $e.metadata.product_event_type = /FileAccessed|FileDownloaded|SearchQueryPerformed/ nocase
+    $user = $e.principal.user.userid
+    $ip = $e.principal.ip
+
+  match:
+    $user, $ip over 1h
+
+  outcome:
+    $event_count = count_distinct($e.metadata.id)
+
+  condition:
+    $event_count > 30
+}

@@ -1,0 +1,65 @@
+# T1021 — Remote Services
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 detection rule for T1021 Remote Services lateral movement.
+# Data Sources: Google Chronicle SIEM with Windows Security Event Log ingestion via Chronicle forwarder or Google Cloud integration, Chronicle UDM normalized authentication events from Windows domain controllers and member endpoints
+# Required Sources: USER_LOGIN UDM events (Windows Security log source via Chronicle parser)
+# False Positives: Infrastructure automation tools (Terraform, Ansible, Salt) authenticating to multiple Windows VMs simultaneously from a CI/CD runner IP satisfy the multi-host threshold without adversarial intent., Active Directory health monitoring solutions that log into domain controllers and member servers sequentially to validate replication, DNS, and service health generate legitimate multi-target authentication bursts using privileged monitoring accounts., End users on VPN who legitimately use RDP to connect to different remote desktops or server workloads from a single VPN-assigned IP will trigger the REMOTE_INTERACTIVE session type detection, particularly if their account names include role indicators like 'admin'.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1021
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1021_remote_services_lateral_movement {
+  meta:
+    author = "Argus Detection Platform"
+    description = "T1021 Remote Services — lateral movement via RDP and Network logons from a single source IP authenticating to multiple distinct hosts"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1021"
+    severity = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1021/"
+
+  events:
+    $login.metadata.event_type = "USER_LOGIN"
+    (
+      $login.metadata.product_event_type = "4624" OR
+      $login.metadata.product_event_type = "4625"
+    )
+    (
+      $login.network.session_type = "REMOTE_INTERACTIVE" OR
+      $login.network.session_type = "NETWORK" OR
+      re.regex($login.extensions.auth.auth_details, `LogonType=(3|10)`)
+    )
+    $login.principal.ip != ""
+    $login.principal.ip != "127.0.0.1"
+    $login.principal.ip != "::1"
+    NOT re.regex($login.target.user.userid, `.*\$`)
+    NOT (
+      $login.target.user.userid = "ANONYMOUS LOGON" OR
+      $login.target.user.userid = "LOCAL SERVICE" OR
+      $login.target.user.userid = "NETWORK SERVICE"
+    )
+    $src_ip = $login.principal.ip
+    $username = $login.target.user.userid
+    $dst_host = $login.target.hostname
+
+  match:
+    $src_ip, $username over 24h
+
+  outcome:
+    $unique_target_hosts = count_distinct($dst_host)
+    $total_logons = count($login)
+    $is_privileged = max(
+      if(re.regex($username, `(?i)(admin|administrator|svc-|service|backup)`), 1, 0)
+    )
+    $any_after_hours = max(
+      if(timestamp.extract_hour($login.metadata.event_timestamp) < 6, 1, 0)
+    )
+    $risk_score = $is_privileged + $any_after_hours +
+      if($unique_target_hosts > 3, 2, if($unique_target_hosts > 1, 1, 0))
+
+  condition:
+    #login > 1 and ($unique_target_hosts >= 2 or $risk_score >= 2)
+}

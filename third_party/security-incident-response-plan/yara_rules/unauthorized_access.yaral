@@ -1,0 +1,85 @@
+rule unauthorized_access_impossible_travel {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects unauthorized access: successful logins from geo-blocked regions or impossible travel (two logins from different countries within 2 hours for the same account)"
+    severity = "HIGH"
+    priority = "P2"
+    mitre_tactic = "Initial Access"
+    mitre_technique = "T1078"
+    mitre_subtechnique = "T1078.004"
+    reference = "https://attack.mitre.org/techniques/T1078/"
+    created = "2024-01-15"
+    version = "1.1"
+
+  events:
+    $auth1.metadata.event_type = "AUTHENTICATION"
+    $auth1.security_result.action = "ALLOW"
+    $auth1.principal.user.userid = $user
+    $auth1.principal.ip = $ip1
+    $auth1.principal.location.country_or_region = $country1
+
+    $auth2.metadata.event_type = "AUTHENTICATION"
+    $auth2.security_result.action = "ALLOW"
+    $auth2.principal.user.userid = $user
+    $auth2.principal.ip = $ip2
+    $auth2.principal.location.country_or_region = $country2
+
+    $auth1.principal.location.country_or_region != $auth2.principal.location.country_or_region
+    $auth1.principal.ip != $auth2.principal.ip
+
+  match:
+    $user over 2h
+
+  condition:
+    #auth1 >= 1 and
+    #auth2 >= 1
+
+  outcome:
+    $risk_score = max(85)
+    $affected_user = $user
+    $login_country_1 = $country1
+    $login_country_2 = $country2
+    $login_ip_1 = $ip1
+    $login_ip_2 = $ip2
+    $first_login_time = min($auth1.metadata.event_timestamp.seconds)
+    $second_login_time = max($auth2.metadata.event_timestamp.seconds)
+    $severity_label = "HIGH"
+    $playbook = "unauthorized_access_response"
+    $ioc_type = "user_account,ip_address"
+    $containment_action = "disable_account"
+}
+
+rule geo_blocked_region_login {
+  meta:
+    author = "SOC Engineering Team"
+    description = "Detects successful authentication from geo-blocked or sanctioned regions"
+    severity = "HIGH"
+    priority = "P2"
+    mitre_tactic = "Initial Access"
+    mitre_technique = "T1078"
+    reference = "https://attack.mitre.org/techniques/T1078/"
+    created = "2024-01-15"
+    version = "1.0"
+
+  events:
+    $geo_auth.metadata.event_type = "AUTHENTICATION"
+    $geo_auth.security_result.action = "ALLOW"
+    $geo_auth.principal.user.userid = $user
+    $geo_auth.principal.location.country_or_region = /Russia|China|North Korea|Iran|Belarus|Cuba|Syria/i
+    not $geo_auth.principal.user.user_role = /vpn_allowed|global_traveler|executive/i
+
+  match:
+    $user over 5m
+
+  condition:
+    #geo_auth >= 1
+
+  outcome:
+    $risk_score = max(80)
+    $affected_user = $user
+    $blocked_country = array_distinct($geo_auth.principal.location.country_or_region)
+    $source_ip = array_distinct($geo_auth.principal.ip)
+    $severity_label = "HIGH"
+    $playbook = "unauthorized_access_response"
+    $ioc_type = "user_account,ip_address"
+}

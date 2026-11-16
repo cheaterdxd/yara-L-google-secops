@@ -1,0 +1,157 @@
+# T1078.002 — Domain Accounts
+# Tactic: Defense Evasion, Persistence, Privilege Escalation, Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Three companion YARA-L 2.0 rules for Google Chronicle detecting T1078.002 Domain Account Abuse.
+# Data Sources: Google Chronicle — Windows Event Logs ingested via Chronicle Forwarder or Google Cloud Logging, Chronicle UDM USER_LOGIN events normalized from Windows Security Event Log, Chronicle SERVICE_INSTALLATION events from EventID 4697/4698
+# Required Sources: UDM USER_LOGIN events, UDM SERVICE_INSTALLATION events, UDM USER_UNCATEGORIZED events (for auth failures)
+# False Positives: Automated server provisioning tools that authenticate a domain build account to 5-10 fresh VMs in sequence during infrastructure scaling events, satisfying the lateral movement correlation., IT operations teams running PowerShell Desired State Configuration (DSC) pull server refreshes overnight, creating scheduled tasks under domain service accounts during off-hours windows., Integration testing pipelines in staging environments that replay credential-based authentication sequences — including intentional failure-then-success flows — as part of authentication regression tests.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1078.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1078_002_domain_account_abuse {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1078.002 Domain Account Abuse: brute-force success, lateral movement to 3+ hosts, off-hours sensitive logon, and persistence via service/scheduled task creation by a domain account."
+    technique = "T1078.002"
+    tactic = "Initial Access, Persistence, Privilege Escalation, Defense Evasion"
+    severity = "HIGH"
+    confidence = "HIGH"
+    platforms = "Windows"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    // Anchor: successful domain account logon (network or remote interactive)
+    $logon.metadata.event_type = "USER_LOGIN"
+    $logon.metadata.vendor_name = "Microsoft"
+    $logon.outcome.success = true
+    $logon.principal.user.userid != ""
+    $logon.target.user.email_addresses != ""
+    // Exclude machine accounts (end with $)
+    not re.regex($logon.principal.user.userid, `.*\$$`)
+    // Exclude system-level domains
+    $logon.principal.user.windows_sid != ""
+    $logon.network.ip_protocol = "TCP"
+    // Capture user and destination for correlation
+    $user = $logon.principal.user.userid
+    $domain = $logon.principal.administrative_domain
+    $domain != "NT AUTHORITY"
+    $domain != ""
+    $dest1 = $logon.target.hostname
+
+    // Second logon to a DIFFERENT destination — same user within window
+    $logon2.metadata.event_type = "USER_LOGIN"
+    $logon2.outcome.success = true
+    $logon2.principal.user.userid = $user
+    $logon2.principal.administrative_domain = $domain
+    $dest2 = $logon2.target.hostname
+    $dest2 != $dest1
+
+    // Third logon to yet another DIFFERENT destination
+    $logon3.metadata.event_type = "USER_LOGIN"
+    $logon3.outcome.success = true
+    $logon3.principal.user.userid = $user
+    $logon3.principal.administrative_domain = $domain
+    $dest3 = $logon3.target.hostname
+    $dest3 != $dest1
+    $dest3 != $dest2
+
+    // At least 5 preceding authentication failures for same user (brute-force signal)
+    $fail.metadata.event_type = "USER_LOGIN"
+    $fail.outcome.success = false
+    $fail.principal.user.userid = $user
+    $fail.principal.administrative_domain = $domain
+
+  match:
+    $user, $domain over 24h
+
+  outcome:
+    $risk_score = max(
+      // Lateral movement: 3+ unique destinations
+      if($dest1 != "" and $dest2 != "" and $dest3 != "", 40, 0) +
+      // Brute force success
+      if(count_distinct($fail.metadata.id) >= 5, 20, 0)
+    )
+    $signal_type = array_distinct("LateralMovement", "BruteForceSuccess")
+    $destination_1 = $dest1
+    $destination_2 = $dest2
+    $destination_3 = $dest3
+    $account_domain = $domain
+
+  condition:
+    // All three lateral movement logon events must fire
+    $logon and $logon2 and $logon3 and
+    // At least 5 failure events for brute-force signal
+    #fail >= 5
+}
+
+// --- Companion rule: Off-Hours Sensitive Domain Account Logon ---
+rule t1078_002_offhours_domain_logon {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects domain account network logon outside business hours (before 07:00 or after 19:00 UTC)."
+    technique = "T1078.002"
+    severity = "CRITICAL"
+    confidence = "MEDIUM"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.metadata.vendor_name = "Microsoft"
+    $e.outcome.success = true
+    $e.principal.user.userid != ""
+    not re.regex($e.principal.user.userid, `.*\$$`)
+    $e.principal.administrative_domain != "NT AUTHORITY"
+    $e.principal.administrative_domain != ""
+    // Network logon type 3 via additional.fields
+    $e.additional.fields["LogonType"] = "3"
+    // Off-hours: hour < 7 or hour > 19 (UTC)
+    (timestamp.get_hour($e.metadata.event_timestamp, "UTC") < 7 or
+     timestamp.get_hour($e.metadata.event_timestamp, "UTC") > 19)
+
+  match:
+    $e.principal.user.userid over 1h
+
+  outcome:
+    $account_name = $e.principal.user.userid
+    $account_domain = $e.principal.administrative_domain
+    $source_ip = $e.principal.ip
+    $destination = $e.target.hostname
+    $hour_utc = timestamp.get_hour($e.metadata.event_timestamp, "UTC")
+
+  condition:
+    $e
+}
+
+// --- Companion rule: Persistence via Domain Account (Service/Task Creation) ---
+rule t1078_002_persistence_domain_account {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects domain account creating a Windows service (4697) or scheduled task (4698) as a persistence mechanism."
+    technique = "T1078.002"
+    severity = "HIGH"
+    confidence = "HIGH"
+
+  events:
+    $e.metadata.event_type = "SERVICE_INSTALLATION"
+    $e.metadata.vendor_name = "Microsoft"
+    not re.regex($e.principal.user.userid, `.*\$$`)
+    $e.principal.administrative_domain != "NT AUTHORITY"
+    $e.principal.administrative_domain != ""
+    $e.principal.administrative_domain != "SYSTEM"
+    $e.principal.user.userid != ""
+
+  match:
+    $e.principal.user.userid over 24h
+
+  outcome:
+    $account_name = $e.principal.user.userid
+    $account_domain = $e.principal.administrative_domain
+    $target_host = $e.target.hostname
+    $service_or_task = $e.target.resource.name
+
+  condition:
+    $e
+}

@@ -1,0 +1,71 @@
+# T1136.002 — Domain Account
+# Tactic: Persistence
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Detects domain account creation and privileged Active Directory group membership additions across four behavioral branches: Security Event 4720 (domain account created), Security Event 4728 (privileged group member added), process execution of net.exe/dsadd.exe with domain creation flags, and PowerShell New-ADUser or Add-ADGroupMember cmdlets targeting Domain Admins, Enterprise Admins, or Schema Admins groups.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs ingested via Chronicle forwarder, Endpoint telemetry via Chronicle Endpoint Detection
+# Required Sources: USER_CREATION UDM events, GROUP_MODIFICATION UDM events, PROCESS_LAUNCH UDM events
+# False Positives: Authorized identity lifecycle management platforms (SailPoint IdentityIQ, Saviynt, Omada) performing automated AD account provisioning through approved integration workflows, System administrators executing net.exe or PowerShell AD scripts in documented change management windows for routine account provisioning, Active Directory migration or consolidation projects using dsadd.exe or bulk PowerShell cmdlets to recreate accounts during forest restructuring
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1136.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1136_002_domain_account_creation {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects domain account creation and privileged AD group membership additions consistent with T1136.002. Covers Windows Security Events 4720/4728 and process-based creation via net.exe, dsadd.exe, and PowerShell AD cmdlets."
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Persistence"
+    mitre_attack_technique = "T1136.002"
+    mitre_attack_technique_name = "Create Account: Domain Account"
+    reference = "https://attack.mitre.org/techniques/T1136/002/"
+    false_positives = "Authorized IT provisioning, IAM platform automation, AD migration tooling"
+    version = "1.0"
+
+  events:
+    (
+      // Branch 1: Domain account created — Security Event 4720
+      (
+        $e.metadata.event_type = "USER_CREATION" and
+        $e.metadata.product_event_type = "4720" and
+        not re.regex($e.target.administrative_domain, `(?i)^WORKGROUP$`) and
+        $e.target.administrative_domain != ""
+      )
+      or
+      // Branch 2: Member added to privileged global security group — Security Event 4728
+      (
+        $e.metadata.event_type = "GROUP_MODIFICATION" and
+        $e.metadata.product_event_type = "4728" and
+        re.regex($e.target.group.group_display_name,
+          `(?i)(domain\s+admins|enterprise\s+admins|schema\s+admins|group\s+policy\s+creator\s+owners|^administrators$)`)
+      )
+      or
+      // Branch 3: net.exe / net1.exe / dsadd.exe with /add /domain flags
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex($e.target.process.file.full_path,
+          `(?i)(\\net\.exe$|\\net1\.exe$|\\dsadd\.exe$)`) and
+        (
+          re.regex($e.target.process.command_line, `(?i)/add`) and
+          re.regex($e.target.process.command_line, `(?i)/domain`)
+        ) or
+        re.regex($e.target.process.command_line, `(?i)dsadd\s+user`)
+      )
+      or
+      // Branch 4: PowerShell New-ADUser or Add-ADGroupMember targeting privileged groups
+      (
+        $e.metadata.event_type = "PROCESS_LAUNCH" and
+        re.regex($e.target.process.file.full_path,
+          `(?i)(\\powershell\.exe$|\\pwsh\.exe$)`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(New-ADUser|Add-ADGroupMember|New-ADAccount)`) and
+        re.regex($e.target.process.command_line,
+          `(?i)(Domain\s+Admins|Enterprise\s+Admins|Schema\s+Admins|Administrators|-AccountPassword|-Enabled\s+\$true)`)
+      )
+    )
+
+  condition:
+    $e
+}

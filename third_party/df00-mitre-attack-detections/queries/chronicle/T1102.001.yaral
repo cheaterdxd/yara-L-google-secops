@@ -1,0 +1,62 @@
+# T1102.001 — Dead Drop Resolver
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting dead drop resolver access patterns (T1102.001).
+# Data Sources: Google Chronicle UDM, Endpoint telemetry (CrowdStrike, Carbon Black, SentinelOne via Chronicle ingestion), Sysmon via Chronicle Windows forwarder, Network telemetry
+# Required Sources: NETWORK_CONNECTION UDM events
+# False Positives: Cloud-native application runtimes (java.exe for enterprise Java apps) legitimately reaching cloud storage endpoints for configuration or licensing, PowerShell-based administrative automation in Azure environments interacting with SharePoint or OneDrive via Microsoft Graph, Containerized workloads running python or curl to pull configurations from S3 buckets during legitimate infrastructure bootstrapping
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1102.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule dead_drop_resolver_t1102_001 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects T1102.001 Dead Drop Resolver - suspicious or non-browser processes contacting known paste sites, raw GitHub, social media APIs, and cloud storage used as C2 dead drop resolvers"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1102.001"
+    severity = "HIGH"
+    confidence = "MEDIUM"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.metadata.product_event_type != "browser_navigation"
+
+    // Match dead drop resolver domains
+    (
+      $e.target.hostname = /(?i)(pastebin\.com|pastebin\.pl|paste\.ee|hastebin\.com)/ or
+      $e.target.hostname = /(?i)(raw\.githubusercontent\.com|gist\.github\.com)/ or
+      $e.target.hostname = /(?i)(api\.twitter\.com|t\.co|twitter\.com)/ or
+      $e.target.hostname = /(?i)(docs\.google\.com|drive\.google\.com|sites\.google\.com)/ or
+      $e.target.hostname = /(?i)(youtube\.com|youtu\.be)/ or
+      $e.target.hostname = /(?i)(technet\.microsoft\.com|social\.technet\.microsoft\.com)/ or
+      $e.target.hostname = /(?i)(livejournal\.com|imgur\.com|i\.imgur\.com)/ or
+      $e.target.hostname = /(?i)(reddit\.com|old\.reddit\.com)/ or
+      $e.target.hostname = /(?i)(workers\.dev|cloudflare\.com)/ or
+      $e.target.hostname = /(?i)(amazonaws\.com|s3\.amazonaws\.com)/ or
+      $e.target.hostname = /(?i)(onedrive\.live\.com|sharepoint\.com)/ or
+      $e.target.hostname = /(?i)(notion\.so|trello\.com)/ or
+      $e.target.hostname = /(?i)(discord\.com|discordapp\.com)/ or
+      $e.target.hostname = /(?i)(telegram\.org|t\.me)/
+    )
+
+    // Must be initiated by suspicious process OR not a known browser/trusted app
+    (
+      $e.principal.process.file.full_path = /(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|curl\.exe|wget\.exe|bitsadmin\.exe|python\.exe|python3\.exe|perl\.exe|ruby\.exe|java\.exe|msiexec\.exe)/ or
+      (
+        not $e.principal.process.file.full_path = /(?i)(chrome\.exe|msedge\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|safari\.exe|outlook\.exe|teams\.exe|slack\.exe|onedrive\.exe|dropbox\.exe|svchost\.exe)/
+      )
+    )
+
+    $hostname = $e.principal.hostname
+    $process = $e.principal.process.file.full_path
+    $target = $e.target.hostname
+    $user = $e.principal.user.userid
+
+  condition:
+    $e
+}

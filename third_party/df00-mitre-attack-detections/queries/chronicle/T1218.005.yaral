@@ -1,0 +1,48 @@
+# T1218.005 — Mshta
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle Security Operations (Google SecOps) YARA-L 2.0 rule detecting T1218.005 mshta.exe abuse using the UDM process launch event model.
+# Data Sources: Google SecOps UDM (Chronicle), Windows Sensor / Sysmon ingested via Chronicle forwarder, CrowdStrike Falcon or Microsoft Defender for Endpoint (Chronicle-integrated)
+# Required Sources: UDM events with metadata.event_type = PROCESS_LAUNCH
+# False Positives: Enterprise asset management or inventory agents built on HTA that legitimately load configuration data from internal HTTP shares — the RemoteURL indicator will fire even for trusted intranet URLs, so enrich with internal IP allowlists before escalating, Windows IT toolkits distributed via software management platforms where mshta.exe is used to render post-install configuration wizards stored in AppData, triggering the writable-path path indicator, Red team or purple team exercises that explicitly test mshta.exe detection coverage; cross-reference against the organisation's threat simulation calendar and authorised tool inventory
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1218_005_mshta_suspicious_execution {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects suspicious mshta.exe execution patterns associated with T1218.005 — Signed Binary Proxy Execution: Mshta. Covers remote URL loading, inline VBScript/JavaScript, COM object invocation, Office application parent processes, and mshta.exe spawning high-risk child processes."
+    mitre_attack_technique = "T1218.005"
+    mitre_attack_tactic = "Defense Evasion"
+    reference = "https://attack.mitre.org/techniques/T1218/005/"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    (
+      (
+        re.regex($e.target.process.file.full_path, `(?i)\\mshta\.exe$`) and
+        (
+          re.regex($e.target.process.command_line,
+            `(?i)(https?:\/\/|vbscript:|javascript:|GetObject|WScript\.Shell|Shell\.Application|CreateObject|ActiveXObject)`) or
+          re.regex($e.principal.process.file.full_path,
+            `(?i)(winword|excel|outlook|powerpnt)\.exe$`) or
+          re.regex($e.target.process.command_line,
+            `(?i)(\\\\Temp\\\\|\\\\AppData\\\\|\\\\Downloads\\\\|\\\\Desktop\\\\|\\\\Public\\\\)`)
+        )
+      ) or
+      (
+        re.regex($e.principal.process.file.full_path, `(?i)\\mshta\.exe$`) and
+        re.regex($e.target.process.file.full_path,
+          `(?i)\\(cmd|powershell|wscript|cscript|certutil|bitsadmin|regsvr32|rundll32)\.exe$`)
+      )
+    )
+
+  condition:
+    $e
+}

@@ -1,0 +1,48 @@
+# T1102.003 — One-Way Communication
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting NETWORK_CONNECTION UDM events from suspicious process executables to hostnames associated with legitimate web platforms commonly abused for T1102.003 one-way C2.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM (NETWORK_CONNECTION events), Endpoint telemetry forwarded via Chronicle ingestion (Sysmon, CrowdStrike, Carbon Black)
+# Required Sources: UDM NETWORK_CONNECTION events
+# False Positives: DevOps tooling such as Terraform provisioners, Ansible playbooks, or Jenkins agents using PowerShell or Python runtimes to interact with GitHub or Google Cloud APIs during automated infrastructure pipelines, Scripted monitoring solutions that spawn node.exe or curl.exe to probe Discord webhooks or Telegram bot API endpoints for alerting pipeline health checks, Scheduled compliance or inventory scripts that use certutil.exe or msbuild.exe to fetch current policy baselines from SharePoint repositories
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1102.003
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1102_003_one_way_c2_web_service {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects one-way C2 communication via legitimate web services initiated by suspicious LOLBin or scripting processes (MITRE ATT&CK T1102.003)"
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1102.003"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "Developer tooling, IT automation scripts, CI/CD pipelines accessing public APIs"
+    version = "1.0"
+
+  events:
+    $net.metadata.event_type = "NETWORK_CONNECTION"
+    $net.principal.process.file.full_path = /(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|curl\.exe|wget\.exe|bitsadmin\.exe|msiexec\.exe|python\.exe|python3\.exe|ruby\.exe|node\.exe|wmic\.exe|msbuild\.exe)$/
+    $net.target.hostname = /(?i)(twitter\.com|x\.com|github\.com|githubusercontent\.com|gitlab\.com|telegram\.org|t\.me|pastebin\.com|paste\.ee|hastebin\.com|discord\.com|discordapp\.com|googleapis\.com|sharepoint\.com|onedrive\.live\.com|reddit\.com|redd\.it|notion\.so|trello\.com|digitalpoint\.com)/
+    $net.principal.hostname = $hostname
+
+  match:
+    $hostname over 5m
+
+  outcome:
+    $process_name = array_distinct($net.principal.process.file.full_path)
+    $dest_domain = array_distinct($net.target.hostname)
+    $command_line = array_distinct($net.principal.process.command_line)
+    $parent_process = array_distinct($net.principal.process.parent_process.file.full_path)
+    $is_encoded_cmd = max(if($net.principal.process.command_line = /(?i)(-EncodedCommand|-enc\s|FromBase64String|base64)/, 1, 0))
+    $is_office_parent = max(if($net.principal.process.parent_process.file.full_path = /(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|onenote\.exe|msaccess\.exe|acrord32\.exe|acrobat\.exe)/, 1, 0))
+    $is_service_spawn = max(if($net.principal.process.parent_process.file.full_path = /(?i)(svchost\.exe|taskeng\.exe|taskhostw\.exe|services\.exe|wmiprvse\.exe)/, 1, 0))
+    $risk_score = max(if($net.principal.process.command_line = /(?i)(-EncodedCommand|-enc\s|FromBase64String|base64)/, 30, 0)) +
+                  max(if($net.principal.process.parent_process.file.full_path = /(?i)(winword\.exe|excel\.exe|powerpnt\.exe|outlook\.exe|onenote\.exe|msaccess\.exe|acrord32\.exe|acrobat\.exe)/, 40, 0)) +
+                  max(if($net.principal.process.parent_process.file.full_path = /(?i)(svchost\.exe|taskeng\.exe|taskhostw\.exe|services\.exe|wmiprvse\.exe)/, 20, 0))
+
+  condition:
+    $net
+}

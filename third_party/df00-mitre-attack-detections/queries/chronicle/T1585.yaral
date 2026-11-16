@@ -1,0 +1,63 @@
+# T1585 — Establish Accounts
+# Tactic: Resource Development
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting inbound multi-recipient email campaigns from privacy-focused or free consumer email providers over a 24-hour match window, consistent with T1585 Establish Accounts resource development activity.
+# Data Sources: Google Workspace Gmail via Chronicle Google Workspace parser, Microsoft Office 365 via Chronicle O365 UDM parser, Proofpoint Email Protection via Chronicle Proofpoint parser, Mimecast Email Security via Chronicle Mimecast parser
+# Required Sources: UDM EMAIL_TRANSACTION events
+# False Positives: Internal employee communications relayed through personal Gmail accounts when corporate email is unavailable — e.g. during an outage where employees BCC multiple colleagues from personal accounts, Third-party marketing automation platforms that send on behalf of a client using a Gmail relay address, contacting multiple recipients in your organisation as part of a legitimate campaign you opted into, Anonymous tip or whistleblower submissions from ProtonMail or Tutanota accounts sent to multiple contact addresses within the organisation — consider adding a HR/legal mailbox exclusion to the recipient filter
+# Confidence: medium  Severity: medium
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1585
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1585_establish_accounts_email_campaign {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects inbound multi-recipient email campaigns from privacy-focused or free email providers as T1585 Establish Accounts precursor activity"
+    mitre_attack_tactic = "Resource Development"
+    mitre_attack_technique = "T1585, T1585.001, T1585.002, T1585.003"
+    severity = "MEDIUM"
+    confidence = "MEDIUM"
+    version = "1.0"
+    reference = "https://attack.mitre.org/techniques/T1585/"
+
+  events:
+    $email.metadata.event_type = "EMAIL_TRANSACTION"
+    $email.network.direction = "INBOUND"
+    (
+      re.regex($email.network.email.from,
+        `@(protonmail\.com|proton\.me|tutanota\.com|tutamail\.com|cock\.li|disroot\.org|riseup\.net|mailfence\.com|guerrillamail\.com|temp-mail\.org|mailinator\.com|10minutemail\.com|throwam\.com|yopmail\.com)$`)
+      or
+      re.regex($email.network.email.from,
+        `@(gmail\.com|yahoo\.com|hotmail\.com|outlook\.com|live\.com|icloud\.com|aol\.com)$`)
+    )
+    $sender = $email.network.email.from
+    $recipient = $email.network.email.to
+
+  match:
+    $sender over 24h
+
+  outcome:
+    $email_count = count_distinct($email.metadata.id)
+    $targeted_users = count_distinct($recipient)
+    $has_attachment = max(
+      if($email.network.email.subject != "" and
+         strings.count($email.network.email.full_headers, "Content-Disposition: attachment") > 0, 1, 0)
+    )
+    $is_privacy_provider = max(
+      if(re.regex($sender,
+        `@(protonmail\.com|proton\.me|tutanota\.com|tutamail\.com|cock\.li|disroot\.org|riseup\.net|mailfence\.com|guerrillamail\.com|temp-mail\.org|mailinator\.com|yopmail\.com)$`), 1, 0)
+    )
+    $risk_score = (
+      if($targeted_users >= 10, 40, if($targeted_users >= 5, 25, if($targeted_users >= 2, 10, 0)))
+      + if($is_privacy_provider == 1, 25, if($targeted_users >= 3, 15, 0))
+      + if($has_attachment == 1, 10, 0)
+      + if($email_count >= 5, 15, 0)
+    )
+
+  condition:
+    #email >= 3 and
+    $targeted_users >= 2 and
+    $risk_score >= 25
+}

@@ -1,0 +1,56 @@
+# T1566.002 — Spearphishing Link
+# Tactic: Initial Access
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting spearphishing link follow-on execution by monitoring PROCESS_LAUNCH events where email clients (Outlook, Thunderbird, Teams), web browsers (Edge, Chrome, Firefox, Opera, Brave), or mshta.exe spawn known-suspicious execution utilities.
+# Data Sources: Google Chronicle SIEM, Windows Sysmon UDM ingestion, Chronicle Endpoint Telemetry, Microsoft Defender for Endpoint via Chronicle connector
+# Required Sources: UDM process events (PROCESS_LAUNCH)
+# False Positives: Legitimate software installers invoked through browser clicks (e.g., clicking a download link that opens an msiexec installer) where the update process exclusions do not match the specific installer string, Corporate IT tools deployed via Teams or Outlook plugins that legitimately invoke PowerShell or cmd.exe as part of approved automation workflows, Security tools or EDR agents that hook into browser processes and launch sub-components that match the suspicious child process list
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1566.002
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1566_002_spearphishing_link_spawn {
+  meta:
+    author = "df00tech Detection Engineering"
+    description = "Detects T1566.002 Spearphishing Link follow-on execution: email clients, browsers, or mshta.exe spawning suspicious scripting or execution utilities"
+    severity = "HIGH"
+    priority = "HIGH"
+    mitre_attack_tactic = "Initial Access"
+    mitre_attack_technique = "T1566.002"
+    reference = "https://attack.mitre.org/techniques/T1566/002/"
+    created = "2026-04-21"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path != ""
+
+    // Parent is email client, browser, or mshta
+    (
+      re.regex($e.principal.process.file.full_path, `(?i)(outlook\.exe|thunderbird\.exe|teams\.exe|msoutlook\.exe|msedge\.exe|chrome\.exe|firefox\.exe|iexplore\.exe|opera\.exe|brave\.exe|mshta\.exe)$`)
+    )
+
+    // Child is a suspicious process
+    (
+      re.regex($e.target.process.file.full_path, `(?i)(powershell\.exe|pwsh\.exe|cmd\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|msiexec\.exe|certutil\.exe|bitsadmin\.exe|curl\.exe|wget\.exe)$`)
+    )
+
+    // Exclude legitimate browser sub-processes
+    not re.regex($e.target.process.command_line, `(?i)(--type=renderer|--type=utility|--type=gpu-process|--type=crashpad-handler|--extension-process|NativeMessagingHost|MicrosoftEdgeUpdate|GoogleUpdate|ChromeSetup|EdgeUpdate)`)
+
+    // Exclude msiexec update launches from browsers (already captured above but belt-and-suspenders)
+    not (
+      re.regex($e.target.process.file.full_path, `(?i)msiexec\.exe$`) and
+      re.regex($e.target.process.command_line, `(?i)(MicrosoftEdgeUpdate|GoogleUpdate|ChromeSetup|EdgeUpdate)`)
+    )
+
+    $host = $e.principal.hostname
+    $parent = $e.principal.process.file.full_path
+    $child = $e.target.process.file.full_path
+    $cmdline = $e.target.process.command_line
+    $user = $e.principal.user.userid
+
+  condition:
+    $e
+}

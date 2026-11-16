@@ -1,0 +1,41 @@
+# T1052 — Exfiltration Over Physical Medium
+# Tactic: Exfiltration
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting file creation events targeting removable drive letters D-Z with sensitive file extensions.
+# Data Sources: Chronicle UDM via Google Security Operations, Windows Sysmon forwarded to Chronicle, Microsoft Defender for Endpoint via Chronicle ingestion
+# Required Sources: FILE_CREATION UDM events
+# False Positives: Approved data transfer workflows where users regularly copy reports or CSVs to encrypted USB drives with documented business justification, Security tools performing file integrity backups to removable media as part of incident response toolkit deployment, Temporary worker onboarding where contractors receive project files on USB drives per standard provisioning process
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1052
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1052_exfiltration_over_physical_medium {
+  meta:
+    author = "df00tech"
+    description = "Detects bulk or sensitive file writes to removable drive letters indicating potential exfiltration over physical medium (T1052)"
+    severity = "HIGH"
+    mitre_attack_tactic = "Exfiltration"
+    mitre_attack_technique = "T1052"
+    reference = "https://attack.mitre.org/techniques/T1052/"
+    created = "2026-04-16"
+
+  events:
+    $e.metadata.event_type = "FILE_CREATION"
+    $e.target.file.full_path = /^[D-Zd-z]:\\/
+    $e.target.file.full_path = /\.(zip|rar|7z|tar|gz|docx?|xlsx?|pdf|pst|ost|db|sql|bak|key|pfx|p12|rdp|kdbx|csv|json|xml|eml|mdb|accdb)$/i
+    $host = $e.principal.hostname
+    $user = $e.principal.user.userid
+
+  match:
+    $host, $user over 1h
+
+  outcome:
+    $sensitive_file_count = count_distinct($e.target.file.full_path)
+    $sample_files = array_distinct($e.target.file.full_path)
+    $drive_letters = array_distinct(re.capture($e.target.file.full_path, "^([A-Za-z]:)"))
+
+  condition:
+    #e > 3
+}

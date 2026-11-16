@@ -1,0 +1,88 @@
+# T1571 — Non-Standard Port
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting outbound connections to known C2 ports or high-risk processes connecting to non-standard ports on public IPs.
+# Data Sources: Google Chronicle (UDM ingestion), Endpoint telemetry via Chronicle forwarder, Windows Event Logs (Sysmon), EDR network telemetry
+# Required Sources: UDM events with metadata.event_type = NETWORK_CONNECTION
+# False Positives: Legitimate cloud-based SaaS applications may communicate over port 8088 or 8888 for API traffic — validate destination domain against threat intelligence and known SaaS provider IP ranges before alerting, PowerShell-based configuration management tools (DSC, Ansible WinRM) may use elevated ports for management channels — correlate with authorized configuration management schedule and source host role, certutil.exe used for authorized PKI operations or OCSP/CRL checking may occasionally reach non-standard ports depending on enterprise CA configuration — validate against PKI infrastructure IP list
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1571
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1571_non_standard_port_c2 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects C2 activity over non-standard ports, correlating high-risk process initiators with known threat actor port patterns (WIRTE, PingPull, Contagious Interview). Scores events by process risk and port suspicion."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1571"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-21"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+    $e.network.direction = "OUTBOUND"
+    $e.principal.process.file.full_path != ""
+    not net.ip_in_range_cidr($e.target.ip, "10.0.0.0/8")
+    not net.ip_in_range_cidr($e.target.ip, "172.16.0.0/12")
+    not net.ip_in_range_cidr($e.target.ip, "192.168.0.0/16")
+    not net.ip_in_range_cidr($e.target.ip, "127.0.0.0/8")
+    (
+      $e.target.port = 444 or
+      $e.target.port = 587 or
+      $e.target.port = 1224 or
+      $e.target.port = 1337 or
+      $e.target.port = 2083 or
+      $e.target.port = 2087 or
+      $e.target.port = 4443 or
+      $e.target.port = 4444 or
+      $e.target.port = 4445 or
+      $e.target.port = 6666 or
+      $e.target.port = 6667 or
+      $e.target.port = 6668 or
+      $e.target.port = 7777 or
+      $e.target.port = 8008 or
+      $e.target.port = 8088 or
+      $e.target.port = 8888 or
+      $e.target.port = 9001 or
+      $e.target.port = 9090 or
+      $e.target.port = 31337 or
+      re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|msiexec\.exe|svchost\.exe)$`)
+    )
+
+  match:
+    $e.principal.hostname over 5m
+
+  outcome:
+    $risk_score = max(
+      if(
+        re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|msiexec\.exe|svchost\.exe)$`) and
+        (
+          $e.target.port = 444 or $e.target.port = 587 or $e.target.port = 1224 or
+          $e.target.port = 1337 or $e.target.port = 2083 or $e.target.port = 2087 or
+          $e.target.port = 4443 or $e.target.port = 4444 or $e.target.port = 4445 or
+          $e.target.port = 6666 or $e.target.port = 6667 or $e.target.port = 6668 or
+          $e.target.port = 7777 or $e.target.port = 8008 or $e.target.port = 8088 or
+          $e.target.port = 8888 or $e.target.port = 9001 or $e.target.port = 9090 or
+          $e.target.port = 31337
+        ), 3,
+        if(
+          re.regex($e.principal.process.file.full_path, `(?i)(cmd\.exe|powershell\.exe|pwsh\.exe|wscript\.exe|cscript\.exe|mshta\.exe|rundll32\.exe|regsvr32\.exe|certutil\.exe|bitsadmin\.exe|msiexec\.exe|svchost\.exe)$`) and
+          $e.target.port > 1024, 2, 1
+        )
+      )
+    )
+    $hostname = $e.principal.hostname
+    $process = $e.principal.process.file.full_path
+    $user = $e.principal.user.userid
+    $parent_process = $e.principal.process.parent_process.file.full_path
+    $dest_ip = $e.target.ip
+    $dest_port = $e.target.port
+    $event_count = count_distinct($e.target.ip)
+
+  condition:
+    $e and $risk_score >= 1
+}

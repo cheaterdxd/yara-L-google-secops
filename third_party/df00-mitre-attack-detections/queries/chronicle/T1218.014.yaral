@@ -1,0 +1,48 @@
+# T1218.014 — MMC
+# Tactic: Defense Evasion
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting MMC.exe abuse (T1218.014) via UDM event model.
+# Data Sources: Google Chronicle with Windows Sysmon forwarder, Google Chronicle with Microsoft Defender for Endpoint
+# Required Sources: UDM Events — PROCESS_LAUNCH type
+# False Positives: Enterprise IT automation platforms that generate MMC executions with PowerShell parent processes as part of approved change management procedures, Security operations tooling that uses MMC snap-ins for host inspection and may spawn cmd.exe for supplemental data collection, Third-party endpoint management agents that store and launch .msc files from ProgramData or AppData directories for device management tasks
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1218.014
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule mmc_suspicious_execution_t1218_014 {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects MMC.exe abuse for proxy execution via malicious .msc files (T1218.014). Covers suspicious path loading, remote MSC, malicious parent processes, and dangerous child process spawning."
+    mitre_attack_tactic = "Defense Evasion"
+    mitre_attack_technique = "T1218.014"
+    severity = "HIGH"
+    confidence = "HIGH"
+    version = "1.0"
+    created = "2026-04-13"
+
+  events:
+    (
+      // MMC loading suspicious .msc or spawned by suspicious parent
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.target.process.file.full_path, `(?i)\\mmc\.exe$`)
+      and (
+        (
+          re.regex($e1.target.process.command_line, `(?i)\.msc`) and
+          re.regex($e1.target.process.command_line, `(?i)(Temp|AppData|Downloads|Public|Desktop|ProgramData)`)
+        ) or
+        re.regex($e1.target.process.command_line, `(?i)(https?://|\\\\[a-zA-Z])`) or
+        re.regex($e1.principal.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|mshta|winword|excel|outlook)\.exe$`)
+      )
+    ) or
+    (
+      // MMC spawning dangerous child processes
+      $e1.metadata.event_type = "PROCESS_LAUNCH"
+      and re.regex($e1.principal.process.file.full_path, `(?i)\\mmc\.exe$`)
+      and re.regex($e1.target.process.file.full_path, `(?i)(cmd|powershell|wscript|cscript|net|netsh)\.exe$`)
+    )
+
+  condition:
+    $e1
+}

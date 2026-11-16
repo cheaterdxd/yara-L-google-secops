@@ -1,0 +1,35 @@
+# T1534 — Internal Spearphishing
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1534 internal spearphishing by identifying Outlook spawning high-risk LOLBin child processes — the primary indicator of VBA macro execution from an internally-delivered phishing email.
+# Data Sources: Chronicle UDM — PROCESS_LAUNCH events (Windows Sysmon or MDE telemetry), Chronicle UDM — EMAIL_TRANSACTION events (O365 ingestion feed), Chronicle Ingestion: Microsoft Windows Defender ATP, Sysmon, or Google Workspace
+# Required Sources: UDM events (PROCESS_LAUNCH type), UDM events (EMAIL_TRANSACTION type — for volume anomaly variant), UDM events (NETWORK_HTTP type — for Teams link delivery variant)
+# False Positives: Legitimate Outlook COM add-ins (Zoom, DocuSign, Salesforce) that cause outlook.exe to spawn rundll32.exe or powershell.exe during initialization or feature updates in enterprise environments., Internal IT macro-enabled Excel/Word templates distributed via email that, when opened from Outlook, invoke PowerShell or cmd.exe for license validation or data population., Bulk email campaigns sent by marketing automation tools operating under shared internal mailbox credentials during product launches, webinar invitations, or compliance notifications.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1534
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule T1534_Internal_Spearphishing {
+  meta:
+    author = "Argus Detection Engineering"
+    description = "Detects internal spearphishing (T1534): Outlook spawning LOLBin child processes indicating VBA macro execution from a compromised internal mailbox, and anomalous internal email send volume."
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1534"
+    severity = "HIGH"
+    confidence = "HIGH"
+    priority = "HIGH"
+    reference = "https://attack.mitre.org/techniques/T1534/"
+
+  events:
+    // Signal 1: Outlook spawning suspicious child process
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.principal.process.file.full_path = /(?i)\\outlook\.exe$/
+    $e.target.process.file.full_path = /(?i)\\(cmd|powershell|pwsh|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|msiexec|wmic|curl|wget)\.exe$/
+    $host = $e.principal.hostname
+    $user = $e.principal.user.userid
+
+  condition:
+    $e
+}

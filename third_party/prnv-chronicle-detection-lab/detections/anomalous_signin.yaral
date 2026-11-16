@@ -1,0 +1,56 @@
+// ===================================================================
+// Detection: Anomalous Sign-In (failed then successful from new country)
+// Author:    Pranav Barot
+// Platform:  Google Chronicle (YARA-L 2.0)
+// MITRE:     T1078 - Valid Accounts
+// Severity:  High
+// ===================================================================
+//
+// Looks for a failed sign-in attempt followed by a successful sign-in
+// for the same user within 15 minutes, where the successful sign-in
+// originates from a country code that is not the user's typical region
+// (Microsoft Entra ID / Azure AD sign-in logs).
+//
+// Why this matters:
+//   - Common credential-stuffing pattern after MFA bypass / token theft.
+//   - Pairs well with the existing Sentinel "high-risk sign-ins" rule
+//     in my Microsoft Sentinel lab.
+
+rule anomalous_signin {
+
+  meta:
+    author        = "Pranav Barot"
+    description   = "Failed then successful sign-in from a new country within a short window"
+    severity      = "High"
+    mitre_attack_tactic    = "Initial Access"
+    mitre_attack_technique = "T1078"
+    reference     = "https://attack.mitre.org/techniques/T1078/"
+    version       = "1.0"
+    created       = "2026-06-25"
+
+  events:
+    // Failed sign-in
+    $fail.metadata.event_type   = "USER_LOGIN"
+    $fail.security_result.action = "BLOCK"
+    $fail.principal.user.userid  = $user
+    $fail.metadata.event_timestamp.seconds < $ok.metadata.event_timestamp.seconds
+
+    // Successful sign-in from a different country, same user
+    $ok.metadata.event_type      = "USER_LOGIN"
+    $ok.security_result.action   = "ALLOW"
+    $ok.principal.user.userid    = $user
+    $ok.principal.location.country_or_region != $fail.principal.location.country_or_region
+
+  match:
+    $user over 15m
+
+  outcome:
+    $risk_score          = max(80)
+    $failed_country      = array_distinct($fail.principal.location.country_or_region)
+    $success_country     = array_distinct($ok.principal.location.country_or_region)
+    $success_source_ip   = array_distinct($ok.principal.ip)
+    $mitre_technique     = "T1078"
+
+  condition:
+    $fail and $ok
+}

@@ -1,0 +1,62 @@
+# T1095 — Non-Application Layer Protocol
+# Tactic: Command and Control
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Chronicle YARA-L 2.0 rule detecting T1095 Non-Application Layer Protocol C2 using UDM NETWORK_CONNECTION events.
+# Data Sources: Google Chronicle SIEM, Chronicle UDM NETWORK_CONNECTION events, Windows Endpoint via Chronicle Forwarder, CrowdStrike Falcon via Chronicle Integration
+# Required Sources: NETWORK_CONNECTION (UDM event type)
+# False Positives: Tor Browser legitimately connects on ports 9050 and 9150 — if Tor usage is authorized, add the Tor Browser process path to the exclusion regex, Enterprise network management platforms using ICMP for circuit-level testing and path MTU discovery when run under custom monitoring agent process names, Custom UDP-based real-time applications such as game server clients, proprietary telemetry collectors, or industrial IoT sensors communicating on non-standard high UDP ports
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1095
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule t1095_non_application_layer_protocol_c2 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects C2 via non-application layer protocols: SOCKS proxy port connections, unexpected ICMP, and anomalous outbound UDP. MITRE ATT&CK T1095 - Non-Application Layer Protocol."
+    mitre_attack_tactic = "Command and Control"
+    mitre_attack_technique = "T1095"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "NETWORK_CONNECTION"
+
+    (
+      // Signal 1: TCP connection to SOCKS proxy ports from non-browser process
+      (
+        $e.target.port in (1080, 1081, 4145, 9050, 9051, 9150, 8118, 9999, 1082, 1083, 3128) and
+        $e.network.ip_protocol = "TCP" and
+        not re.regex($e.principal.process.file.full_path, `(?i)(?:chrome|firefox|msedge|opera|brave|tor\.exe|proxifier)`)
+      )
+      or
+      // Signal 2: ICMP from a process other than standard ping/trace utilities
+      (
+        $e.network.ip_protocol = "ICMP" and
+        not re.regex($e.principal.process.file.full_path, `(?i)(?:ping\.exe|tracert\.exe|pathping\.exe|fping|hping)`)
+      )
+      or
+      // Signal 3: Outbound UDP to non-standard ports from non-system processes
+      (
+        $e.network.ip_protocol = "UDP" and
+        not $e.target.port in (53, 67, 68, 123, 161, 162, 443, 500, 4500, 5353, 5355, 51820, 1194, 3478, 3479, 8801, 8802, 19302, 19303) and
+        not re.regex($e.principal.process.file.full_path, `(?i)(?:svchost\.exe|lsass\.exe|chrome\.exe|firefox\.exe|msedge\.exe|teams\.exe|zoom\.exe|slack\.exe|skype\.exe|discord\.exe|avast\.exe|msmpeng\.exe)`)
+      )
+    )
+
+  outcome:
+    $hostname = $e.principal.hostname
+    $process_path = $e.principal.process.file.full_path
+    $cmdline = $e.principal.process.command_line
+    $parent_process = $e.principal.process.parent_process.file.full_path
+    $dest_ip = $e.target.ip
+    $dest_port = $e.target.port
+    $ip_protocol = $e.network.ip_protocol
+    $username = $e.principal.user.userid
+    $bytes_sent = sum($e.network.sent_bytes)
+    $bytes_received = sum($e.network.received_bytes)
+
+  condition:
+    $e
+}

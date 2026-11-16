@@ -1,0 +1,74 @@
+# T1098.005 — Device Registration
+# Tactic: Persistence, Privilege Escalation
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Chronicle YARA-L 2.0 rules for T1098.005 device registration detection.
+# Data Sources: Google Chronicle UDM — Azure Active Directory audit log feed (native Chronicle Azure AD ingestion or forwarder-based ingestion)
+# Required Sources: UDM events with metadata.product_name = "Azure Active Directory"
+# False Positives: IT provisioning teams performing mass device enrollment during a hardware refresh using tooling that does not match the Microsoft MDM application name allowlist, Azure AD B2B guest device registrations during cross-tenant collaboration scenarios where the initiating app identity differs from tenant-native Intune, First-time Azure AD hybrid join synchronisation where Azure AD Connect registers all domain-joined machines in a single scheduled sync pass, Third-party identity governance solutions (SailPoint, Saviynt) performing device lifecycle operations as part of a joiner/mover/leaver workflow
+# Confidence: medium  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1098.005
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+// Rule 1 — Single registration by unexpected application
+rule t1098_005_device_registration_unexpected_app {
+  meta:
+    author        = "Argus Detection Engineering"
+    description   = "Detects Azure AD / Entra ID device registration initiated by an application outside the known MDM allowlist — consistent with adversary-controlled enrollment via AADInternals or similar tooling (T1098.005)"
+    mitre_tactic  = "Persistence, Privilege Escalation"
+    mitre_technique = "T1098.005"
+    severity      = "HIGH"
+    priority      = "HIGH"
+    reference     = "https://attack.mitre.org/techniques/T1098/005/"
+
+  events:
+    $e.metadata.vendor_name      = "Microsoft"
+    $e.metadata.product_name     = "Azure Active Directory"
+    $e.metadata.event_status     = "SUCCESS"
+    (
+      $e.metadata.product_event_type = "Add device" or
+      $e.metadata.product_event_type = "Register device" or
+      $e.metadata.product_event_type = "Add registered owner to device" or
+      $e.metadata.product_event_type = "Add registered users to device" or
+      $e.metadata.product_event_type = "Update device" or
+      $e.metadata.product_event_type = "Enroll device"
+    )
+    not $e.principal.application = /(?i)microsoft intune|intune enrollment|azure active directory connect|microsoft authentication broker|^azure active directory$/
+    $e.principal.user.email_addresses[0] != ""
+    $user = $e.principal.user.email_addresses[0]
+
+  condition:
+    $e
+}
+
+
+// Rule 2 — Bulk device registration (3+ devices from same user within 1 hour)
+rule t1098_005_bulk_device_registration {
+  meta:
+    author        = "Argus Detection Engineering"
+    description   = "Detects bulk Entra ID device enrollment — 3 or more successful device registrations from the same user within 1 hour — consistent with AADInternals Register-AADIntJoinedDevice automation and APT29 lateral-movement tradecraft (T1098.005)"
+    mitre_tactic  = "Persistence, Privilege Escalation"
+    mitre_technique = "T1098.005"
+    severity      = "HIGH"
+    priority      = "HIGH"
+    reference     = "https://attack.mitre.org/techniques/T1098/005/"
+
+  events:
+    $e.metadata.vendor_name  = "Microsoft"
+    $e.metadata.product_name = "Azure Active Directory"
+    $e.metadata.event_status = "SUCCESS"
+    (
+      $e.metadata.product_event_type = "Add device" or
+      $e.metadata.product_event_type = "Register device" or
+      $e.metadata.product_event_type = "Enroll device"
+    )
+    $e.principal.user.email_addresses[0] != ""
+    $user = $e.principal.user.email_addresses[0]
+
+  match:
+    $user over 1h
+
+  condition:
+    #e >= 3
+}

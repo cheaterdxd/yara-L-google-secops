@@ -1,0 +1,24 @@
+rule suspicious_powershell_encoded_command {
+  meta:
+    author = "Bubenik2022"
+    description = "PowerShell launched with an encoded command, common in malware loaders"
+    severity = "HIGH"
+    mitre_attack_tactic = "Execution"
+    mitre_attack_technique = "T1059.001"
+
+  events:
+    $e.metadata.event_type = "PROCESS_LAUNCH"
+    $e.target.process.file.full_path = /powershell(\.exe)?$/ nocase
+    $e.target.process.command_line = /\s-(enc|encodedcommand)\s+[A-Za-z0-9+\/=]{40,}/ nocase
+    $e.principal.hostname = $host
+
+  match:
+    $host over 5m
+
+  outcome:
+    $risk_score = 75
+    $cmd = array_distinct($e.target.process.command_line)
+
+  condition:
+    $e
+}

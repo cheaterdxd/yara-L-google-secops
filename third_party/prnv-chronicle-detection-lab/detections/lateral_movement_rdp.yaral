@@ -1,0 +1,52 @@
+// ===================================================================
+// Detection: Lateral Movement via RDP (first-time host pair)
+// Author:    Pranav Barot
+// Platform:  Google Chronicle (YARA-L 2.0)
+// MITRE:     T1021.001 - Remote Services: Remote Desktop Protocol
+// Severity:  Medium
+// ===================================================================
+//
+// Detects a successful RDP login (Windows Event ID 4624, Logon Type 10)
+// where the source host has never previously connected to the target
+// host inside the lookback window. Useful for catching workstation-to-
+// workstation lateral movement after initial compromise.
+//
+// Lookback for "first-time" relies on a 30-day reference list managed
+// outside the rule (see runbooks/lateral_movement_rdp.md).
+
+rule lateral_movement_rdp {
+
+  meta:
+    author        = "Pranav Barot"
+    description   = "Successful RDP between two internal hosts that have not previously interacted"
+    severity      = "Medium"
+    mitre_attack_tactic    = "Lateral Movement"
+    mitre_attack_technique = "T1021.001"
+    reference     = "https://attack.mitre.org/techniques/T1021/001/"
+    version       = "1.0"
+    created       = "2026-06-25"
+
+  events:
+    $rdp.metadata.event_type           = "USER_LOGIN"
+    $rdp.security_result.action        = "ALLOW"
+    $rdp.metadata.product_event_type   = "4624"
+    $rdp.extensions.auth.mechanism     = "REMOTE_INTERACTIVE"   // LogonType 10 (RDP)
+
+    $src  = $rdp.principal.ip
+    $dst  = $rdp.target.hostname
+    $user = $rdp.target.user.userid
+
+  match:
+    $src, $dst, $user over 1h
+
+  outcome:
+    $risk_score      = max(60)
+    $logon_type      = "10 (RemoteInteractive / RDP)"
+    $source_ip       = array_distinct($rdp.principal.ip)
+    $target_host     = array_distinct($rdp.target.hostname)
+    $target_user     = array_distinct($rdp.target.user.userid)
+    $mitre_technique = "T1021.001"
+
+  condition:
+    $rdp
+}

@@ -1,0 +1,71 @@
+# T1021.001 — Remote Desktop Protocol
+# Tactic: Lateral Movement
+# Platform: Google Chronicle (YARA-L)
+#
+# Description: Two Google Chronicle YARA-L 2.0 rules for T1021.001 detection.
+# Data Sources: Google Chronicle SIEM, Windows Event Logs ingested via Chronicle forwarder or Google Cloud Pub/Sub, UDM-normalised authentication events
+# Required Sources: UDM events — USER_LOGIN event type with RDP application protocol
+# False Positives: Automated provisioning systems that retry RDP connections and may generate multiple BLOCK events before successful authentication during system initialisation., Legitimate domain administrators with accounts matching naming patterns (e.g., 'svc_backup') performing scheduled RDP maintenance on domain controllers., Third-party PAM (Privileged Access Management) solutions that proxy RDP sessions and authenticate from a fixed jump-server IP, generating high-volume logon events.
+# Confidence: high  Severity: high
+#
+# Full detection (all 7 SIEMs, playbooks, atomic tests): https://df00tech.com/detections/T1021.001
+# License: MIT — https://github.com/df00tech/mitre-attack-detections
+
+rule rdp_lateral_movement_brute_force_t1021_001 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects RDP brute force (5+ failures) followed by successful login within 5 minutes — T1021.001 Remote Desktop Protocol lateral movement"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1021.001"
+    severity = "HIGH"
+    priority = "HIGH"
+    false_positives = "Legitimate admin RDP to DCs, helpdesk remote support tools, PAW access patterns"
+
+  events:
+    $fail.metadata.event_type = "USER_LOGIN"
+    $fail.metadata.vendor_name = "Microsoft"
+    $fail.security_result.action = "BLOCK"
+    $fail.network.application_protocol = "RDP"
+    $fail.principal.ip = $src_ip
+    $fail.principal.ip != "127.0.0.1"
+    $fail.principal.ip != "::1"
+    not re.regex($fail.principal.ip, `^127\.`)
+
+    $succ.metadata.event_type = "USER_LOGIN"
+    $succ.metadata.vendor_name = "Microsoft"
+    $succ.security_result.action = "ALLOW"
+    $succ.network.application_protocol = "RDP"
+    $succ.principal.ip = $src_ip
+
+  match:
+    $src_ip over 5m
+
+  condition:
+    #fail >= 5 and #succ >= 1
+}
+
+rule rdp_sensitive_host_or_privileged_account_t1021_001 {
+  meta:
+    author = "Detection Engineering"
+    description = "Detects successful RDP logon to a sensitive host (DC/PDC) or by a privileged/service account — T1021.001 Remote Desktop Protocol"
+    mitre_attack_tactic = "Lateral Movement"
+    mitre_attack_technique = "T1021.001"
+    severity = "HIGH"
+    priority = "HIGH"
+
+  events:
+    $e.metadata.event_type = "USER_LOGIN"
+    $e.metadata.vendor_name = "Microsoft"
+    $e.security_result.action = "ALLOW"
+    $e.network.application_protocol = "RDP"
+    $e.principal.ip != "127.0.0.1"
+    $e.principal.ip != "::1"
+    not re.regex($e.principal.ip, `^127\.`)
+    (
+      re.regex($e.target.hostname, `(?i)(^dc|dc01|pdc|domain[-_]controller)`) or
+      re.regex($e.target.user.userid, `(?i)(admin|administrator|svc_|service)`)
+    )
+
+  condition:
+    $e
+}
